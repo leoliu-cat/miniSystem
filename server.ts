@@ -741,16 +741,16 @@ async function startServer() {
 
       try {
         const transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST || "smtp.gmail.com",
-          port: Number(process.env.SMTP_PORT) || 587,
-          secure: false,
+          host: process.env.SMTP_HOST,
+          port: Number(process.env.SMTP_PORT),
+          secure: false, // true for 465, false for other ports
           auth: {
-            user: process.env.SMTP_USER || "leo.liu@ministylecards.com",
-            pass: process.env.SMTP_PASS || "vasa uvkd yujf qqtz",
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
           }
         });
         await transporter.sendMail({
-          from: process.env.SMTP_FROM || '"Mini Style Cards" <leo.liu@ministylecards.com>',
+          from: process.env.SMTP_FROM,
           to,
           subject,
           text: body
@@ -1115,17 +1115,17 @@ async function startServer() {
       }
 
       const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST || "smtp.gmail.com",
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: false,
+        host: process.env.SMTP_HOST,
+        port: Number(process.env.SMTP_PORT),
+        secure: false, // true for 465, false for other ports
         auth: {
-          user: process.env.SMTP_USER || "leo.liu@ministylecards.com",
-          pass: process.env.SMTP_PASS || "vasa uvkd yujf qqtz",
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
         },
       });
 
       const mailOptions = {
-        from: `"Mini Style Cards" <${process.env.SMTP_USER || "leo.liu@ministylecards.com"}>`,
+        from: process.env.SMTP_FROM,
         to: email,
         subject: subject,
         text: body,
