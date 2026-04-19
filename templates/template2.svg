@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1200" width="800" height="1200">
+  <!-- Background -->
+  <rect width="800" height="1200" fill="#2c3e50" />
+  
+  <!-- Decorative Elements -->
+  <circle cx="400" cy="450" r="300" fill="none" stroke="#e74c3c" stroke-width="2" stroke-dasharray="10,10" />
+  <circle cx="400" cy="450" r="280" fill="none" stroke="#ecf0f1" stroke-width="1" />
+
+  <!-- Title -->
+  <text x="400" y="150" font-family="sans-serif" font-size="36" fill="#ecf0f1" text-anchor="middle" letter-spacing="10">SAVE THE DATE</text>
+
+  <!-- Names -->
+  <text x="400" y="380" font-family="serif" font-size="72" fill="#e74c3c" text-anchor="middle">{{groom_name_en}}</text>
+  <text x="400" y="460" font-family="serif" font-size="48" fill="#ecf0f1" text-anchor="middle">&amp;</text>
+  <text x="400" y="540" font-family="serif" font-size="72" fill="#e74c3c" text-anchor="middle">{{bride_name_en}}</text>
+
+  <text x="400" y="620" font-family="sans-serif" font-size="24" fill="#bdc3c7" text-anchor="middle">{{groom_name_zh}} · {{bride_name_zh}}</text>
+
+  <!-- Details -->
+  <rect x="200" y="750" width="400" height="2" fill="#e74c3c" />
+  
+  <text x="400" y="820" font-family="sans-serif" font-size="32" fill="#ecf0f1" text-anchor="middle" font-weight="bold">{{wedding_date}}</text>
+  <text x="400" y="870" font-family="sans-serif" font-size="24" fill="#bdc3c7" text-anchor="middle">{{wedding_time}}</text>
+
+  <text x="400" y="980" font-family="serif" font-size="28" fill="#ecf0f1" text-anchor="middle">{{venue_name}}</text>
+  <text x="400" y="1030" font-family="sans-serif" font-size="18" fill="#bdc3c7" text-anchor="middle">{{venue_address}}</text>
+</svg>
