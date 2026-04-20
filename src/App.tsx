@@ -8,6 +8,8 @@ import QuotationList from './components/QuotationList';
 import QuotationLink from './components/QuotationLink';
 import QuotationSettings from './components/QuotationSettings';
 import MarketingExport from './components/MarketingExport';
+import { ShippingAssistant } from './components/ShippingAssistant';
+import { LabelGenerator } from './components/LabelGenerator';
 import { Document, Page, pdfjs } from 'react-pdf';
 
 // Email Notification Form Component
@@ -696,7 +698,7 @@ const MarketingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: 
 
 export default function App() {
   const [view, setView] = useState<"form" | "success" | "dashboard" | "login" | "quotation_link">("form");
-  const [dashboardTab, setDashboardTab] = useState<"orders" | "quotation" | "quotation_records" | "quotation_settings" | "templates" | "marketing">("orders");
+  const [dashboardTab, setDashboardTab] = useState<"orders" | "quotation" | "quotation_records" | "quotation_settings" | "templates" | "marketing" | "shipping" | "labels">("orders");
   const [editQuoteData, setEditQuoteData] = useState<any>(null);
   const [templates, setTemplates] = useState<TemplateData[]>([]);
   
@@ -1783,16 +1785,26 @@ export default function App() {
 
         {view === "dashboard" && (
           <div className="max-w-5xl mx-auto">
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
-              <div className="flex items-center gap-4">
-                <h1 className="text-2xl font-serif text-stone-800">設計師後台</h1>
-                {currentUser && (
-                  <span className="text-sm text-stone-500 bg-stone-100 px-3 py-1 rounded-full">
-                    Hi, {currentUser.name}
-                  </span>
-                )}
+            <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between mb-8 gap-4 w-full">
+              <div className="flex items-center justify-between w-full xl:w-auto">
+                <div className="flex items-center gap-4">
+                  <h1 className="text-2xl font-serif text-stone-800 shrink-0">設計師後台</h1>
+                  {currentUser && (
+                    <span className="text-sm text-stone-500 bg-stone-100 px-3 py-1 rounded-full shrink-0">
+                      Hi, {currentUser.name}
+                    </span>
+                  )}
+                </div>
+                {/* Mobile logout */}
+                <button 
+                  onClick={handleLogout}
+                  className="p-2 text-stone-500 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors xl:hidden shrink-0"
+                  title="登出"
+                >
+                  <LogOut className="w-5 h-5" />
+                </button>
               </div>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full xl:w-auto overflow-hidden">
                 <button
                   onClick={() => {
                     setNewOrderData({
@@ -1815,46 +1827,62 @@ export default function App() {
                     });
                     setShowCreateOrder(true);
                   }}
-                  className="flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"
+                  className="flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm shrink-0 whitespace-nowrap"
                 >
                   <Plus className="w-4 h-4" />
                   新增訂單
                 </button>
-                <div className="flex bg-stone-200 p-1 rounded-lg">
-                  <button 
-                    onClick={() => setDashboardTab("orders")}
-                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${dashboardTab === "orders" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
-                  >
-                    訂單管理
-                  </button>
-                  <button 
-                    onClick={() => setDashboardTab("quotation")}
-                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${dashboardTab === "quotation" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
-                  >
-                    報價計算機
-                  </button>
-                  <button 
-                    onClick={() => setDashboardTab("quotation_records")}
-                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${dashboardTab === "quotation_records" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
-                  >
-                    報價紀錄
-                  </button>
-                  <button 
-                    onClick={() => setDashboardTab("templates")}
-                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${dashboardTab === "templates" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
-                  >
-                    樣板管理
-                  </button>
-                  <button 
-                    onClick={() => setDashboardTab("marketing")}
-                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${dashboardTab === "marketing" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
-                  >
-                    行銷名單
-                  </button>
+                <div className="flex-1 overflow-x-auto pb-2 sm:pb-0 scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
+                  <div className="flex bg-stone-200 p-1 rounded-lg w-max shrink-0 bg-opacity-70 backdrop-blur-sm">
+                    <button 
+                      onClick={() => setDashboardTab("orders")}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${dashboardTab === "orders" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
+                    >
+                      訂單
+                    </button>
+                    <button 
+                      onClick={() => setDashboardTab("quotation")}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${dashboardTab === "quotation" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
+                    >
+                      計算機
+                    </button>
+                    <button 
+                      onClick={() => setDashboardTab("quotation_records")}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${dashboardTab === "quotation_records" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
+                    >
+                      紀錄
+                    </button>
+                    <button 
+                      onClick={() => setDashboardTab("templates")}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${dashboardTab === "templates" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
+                    >
+                      樣板
+                    </button>
+                    <button 
+                      onClick={() => setDashboardTab("marketing")}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap ${dashboardTab === "marketing" ? "bg-white text-stone-900 shadow-sm" : "text-stone-600 hover:text-stone-900"}`}
+                    >
+                      行銷
+                    </button>
+                    <div className="w-px h-6 bg-stone-300 mx-1 opacity-50 self-center shrink-0"></div>
+                    <button 
+                      onClick={() => setDashboardTab("shipping")}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap ${dashboardTab === "shipping" ? "bg-white text-amber-700 shadow-sm" : "text-amber-700/80 hover:text-amber-700"}`}
+                    >
+                      🚀 出貨
+                    </button>
+                    <button 
+                      onClick={() => setDashboardTab("labels")}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap ${dashboardTab === "labels" ? "bg-white text-indigo-600 shadow-sm" : "text-indigo-600/80 hover:text-indigo-600"}`}
+                    >
+                      🖨️ 標籤
+                    </button>
+                  </div>
                 </div>
+                {/* Desktop logout */}
                 <button 
                   onClick={handleLogout}
-                  className="p-2 text-stone-500 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                  className="p-2 text-stone-500 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors hidden xl:block shrink-0"
                   title="登出"
                 >
                   <LogOut className="w-5 h-5" />
@@ -2905,6 +2933,18 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+            
+            {dashboardTab === "shipping" && (
+              <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden" style={{ minHeight: 'calc(100vh - 200px)' }}>
+                <ShippingAssistant />
+              </div>
+            )}
+
+            {dashboardTab === "labels" && (
+              <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden" style={{ minHeight: 'calc(100vh - 200px)' }}>
+                <LabelGenerator />
               </div>
             )}
           </div>
