@@ -376,6 +376,18 @@ async function startServer() {
   });
 
   // Settings API
+  app.get("/api/settings/public", (req, res) => {
+    try {
+      const keys = ['wedding_form_image_a', 'wedding_form_image_b', 'wedding_form_image_c'];
+      const placeholders = keys.map(() => '?').join(',');
+      const settings = db.prepare(`SELECT key, value FROM settings WHERE key IN (${placeholders})`).all(keys) as any[];
+      const settingsMap = settings.reduce((acc, curr) => ({ ...acc, [curr.key]: curr.value }), {});
+      res.json(settingsMap);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/settings", authenticateToken, (req, res) => {
     try {
       const settings = db.prepare("SELECT key, value FROM settings").all() as any[];
@@ -397,7 +409,10 @@ async function startServer() {
         quotation_addons,
         quotation_independent_addons,
         quotation_certificates,
-        quotation_terms
+        quotation_terms,
+        wedding_form_image_a,
+        wedding_form_image_b,
+        wedding_form_image_c
       } = req.body;
       
       const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
@@ -412,6 +427,9 @@ async function startServer() {
         if (quotation_independent_addons !== undefined) stmt.run('quotation_independent_addons', quotation_independent_addons);
         if (quotation_certificates !== undefined) stmt.run('quotation_certificates', quotation_certificates);
         if (quotation_terms !== undefined) stmt.run('quotation_terms', quotation_terms);
+        if (wedding_form_image_a !== undefined) stmt.run('wedding_form_image_a', wedding_form_image_a);
+        if (wedding_form_image_b !== undefined) stmt.run('wedding_form_image_b', wedding_form_image_b);
+        if (wedding_form_image_c !== undefined) stmt.run('wedding_form_image_c', wedding_form_image_c);
       })();
       
       res.json({ success: true });

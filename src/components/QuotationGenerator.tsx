@@ -492,6 +492,11 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
     text += `戶名：樂卡科技有限公司\n`;
     text += `帳號：82110000023603\n`;
     text += `銀行代碼：012\n`;
+    text += `------------------------------\n`;
+    text += `以上資訊麻煩幫我確認，\n`;
+    text += `並提供收貨地址、收件人、收件人電話、email地址。\n`;
+    text += `匯款後麻煩提供後五碼。\n`;
+    text += `------------------------------\n`;
 
     return text;
   };
@@ -616,33 +621,33 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
 
   if (showSettings) {
     return (
-      <div className="h-[calc(100vh-12rem)] overflow-y-auto custom-scrollbar">
+      <div className="lg:h-[calc(100vh-12rem)] overflow-y-auto custom-scrollbar">
         <QuotationSettings onClose={() => setShowSettings(false)} />
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-12rem)]">
+    <div className="flex flex-col lg:grid lg:grid-cols-2 gap-6 lg:h-[calc(100vh-12rem)]">
       {/* 左側：表單輸入區 */}
-      <div className="bg-white rounded-2xl shadow-sm border border-stone-200 overflow-hidden flex flex-col h-full">
-        <div className="p-4 border-b border-stone-200 bg-stone-50 flex justify-between items-center">
+      <div className="bg-white rounded-2xl shadow-sm border border-stone-200 overflow-hidden flex flex-col lg:h-full">
+        <div className="p-4 border-b border-stone-200 bg-stone-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <h2 className="text-lg font-medium text-stone-800 flex items-center gap-2">
-            <Calculator className="w-5 h-5 text-rose-500" />
-            {editQuoteData ? '編輯報價單' : '快速報價計算機'}
+            <Calculator className="w-5 h-5 text-rose-500 shrink-0" />
+            <span className="truncate">{editQuoteData ? '編輯報價單' : '快速報價計算機'}</span>
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             {editQuoteData && onClearEdit && (
               <button
                 onClick={onClearEdit}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-stone-600 bg-white border border-stone-200 rounded-lg hover:bg-stone-50 transition-colors"
+                className="flex items-center justify-center flex-1 sm:flex-none gap-2 px-3 py-1.5 text-sm font-medium text-stone-600 bg-white border border-stone-200 rounded-lg hover:bg-stone-50 transition-colors shrink-0"
               >
                 取消編輯
               </button>
             )}
             <button
               onClick={() => setShowSettings(true)}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-stone-600 bg-white border border-stone-200 rounded-lg hover:bg-stone-50 transition-colors"
+              className="flex items-center justify-center flex-1 sm:flex-none gap-2 px-3 py-1.5 text-sm font-medium text-stone-600 bg-white border border-stone-200 rounded-lg hover:bg-stone-50 transition-colors shrink-0"
             >
               <Settings className="w-4 h-4" />
               報價設定
@@ -650,7 +655,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
           </div>
         </div>
         
-        <div className="p-6 overflow-y-auto flex-1 space-y-8 custom-scrollbar">
+        <div className="p-6 lg:overflow-y-auto flex-1 space-y-8 custom-scrollbar">
           {/* 1. 基本資料 */}
           <section>
             <h3 className="text-sm font-bold text-stone-800 mb-4 pb-2 border-b border-stone-100">1. 基本資料</h3>
@@ -914,7 +919,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
       </div>
 
       {/* 右側：報價預覽區 */}
-      <div className="bg-stone-800 rounded-2xl shadow-lg overflow-hidden flex flex-col h-full text-stone-100">
+      <div className="bg-stone-800 rounded-2xl shadow-lg overflow-hidden flex flex-col lg:h-full text-stone-100">
         <div className="p-4 border-b border-stone-700 bg-stone-900 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
           <h2 className="text-lg font-medium flex items-center gap-2 text-white whitespace-nowrap">
             <FileText className="w-5 h-5 text-rose-400" />
@@ -986,9 +991,10 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
           </div>
         </div>
         
-        <div className="p-6 overflow-y-auto flex-1 custom-scrollbar font-mono text-sm leading-relaxed whitespace-pre-wrap">
+        <div className="p-6 lg:overflow-y-auto flex-1 custom-scrollbar font-mono text-sm leading-relaxed whitespace-pre-wrap">
           {generateOrderText()}
-          {'\n\n'}
+          {'\n\n\n'}
+          注意事項：
           {generateTermsText()}
         </div>
       </div>

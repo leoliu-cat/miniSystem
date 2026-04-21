@@ -299,18 +299,14 @@ export const processingOptionsSchema: Record<string, {display: string, value: st
   ],
   "Material": [
     {"display": "#300um象牙卡-單卡式套餐", "value": "#300um象牙卡-單卡式套餐"},
-    {"display": "#380um雪綿卡-單卡式套餐", "value": "#380um雪綿卡-單卡式套餐"},
     {"display": "#300um象牙卡-(拱形)單卡式套餐", "value": "#300um象牙卡-(拱形)式套餐"},
-    {"display": "#300um雙面霧-(拱形)單卡式套餐", "value": "#300um雙面霧-(拱形)式套餐"},
-    {"display": "#300um象牙卡-(雙開門式)套餐", "value": "#300um象牙卡-(雙開門式)套餐"},
-    {"display": "#300um雙面霧-單卡式套餐", "value": "#300um雙面霧-單卡式套餐"},
-    {"display": "#300um雙面霧-雙開門式套餐", "value": "#300um雙面霧-雙開門式套餐"},
+    {"display": "#300um-雙開門式套餐", "value": "#300um-雙開門式套餐"},
     {"display": "#300um象牙卡-對折式套餐", "value": "#300um象牙卡-對折式套餐"},
-    {"display": "#300um雙面霧-對折式套餐", "value": "#300um雙面霧-對折式套餐"},
+    {"display": "#300um象牙卡-機票套組(機票+護照)", "value": "#300um象牙卡-機票套組(機票+護照)"},
+    {"display": "#300um象牙卡-抽拉式套組)", "value": "#300um象牙卡-抽拉式套組"},
+    {"display": "#300um象牙卡-珍珠封套組)", "value": "#300um象牙卡-珍珠封套組"},
     {"display": "#2mm厚彩色壓克力套餐", "value": "#2mm厚彩色壓克力套餐"},
     {"display": "#壓克力要霧面的", "value": "#壓克力要霧面的"},
-    {"display": "#手工紙套餐", "value": "#手工紙套餐"},
-    {"display": "#凸版印刷單卡式套餐", "value": "#凸版印刷單卡式套餐"},
     {"display": "#副卡(單面印刷)", "value": "#副卡(單面印刷)"},
     {"display": "#副卡(雙面印刷)", "value": "#副卡(雙面印刷)"},
     {"display": "#透明封套", "value": "#透明封套"},
@@ -326,6 +322,8 @@ export const processingOptionsSchema: Record<string, {display: string, value: st
   ],
   "Envelope": [
     {"display": "#顏色待定", "value": "#顏色待定"},
+    {"display": "#信封燙金-單面", "value": "#信封燙金-單面"},
+    {"display": "#信封燙金-[雙面]", "value": "#信封燙金-[雙面]"},
     {"display": "#酒紅", "value": "#酒紅"},
     {"display": "#杜丹紅", "value": "#杜丹紅"},
     {"display": "#蒼粉", "value": "#蒼粉"},
@@ -350,10 +348,6 @@ export const processingOptionsSchema: Record<string, {display: string, value: st
     {"display": "#深紫色", "value": "#深紫色"},
     {"display": "#10K信封(常用款)", "value": "#10K信封(常用款)"},
     {"display": "#12K信封(扁長型)", "value": "#12K信封(扁長型)"},
-    {"display": "#信封燙金-單面", "value": "#信封燙金-單面"},
-    {"display": "#信封燙金-[雙面]", "value": "#信封燙金-[雙面]"},
-    {"display": "#信封印刷-單面", "value": "#信封印刷-單面"},
-    {"display": "#信封印刷-雙面", "value": "#信封印刷-雙面"},
     {"display": "#正面中式", "value": "#正面中式"},
     {"display": "#背面西式", "value": "#背面西式"},
     {"display": "#燙[銀色]箔", "value": "#燙[銀色]箔"},
@@ -708,6 +702,15 @@ export default function App() {
   );
   const [designers, setDesigners] = useState<DesignerData[]>([]);
   const [settings, setSettings] = useState<Record<string, string>>({});
+  const [publicSettings, setPublicSettings] = useState<Record<string, string>>({});
+  
+  useEffect(() => {
+    fetch('/api/settings/public')
+      .then(res => res.json())
+      .then(data => setPublicSettings(data))
+      .catch(console.error);
+  }, []);
+
   const [filterDesignerId, setFilterDesignerId] = useState<number | "all">("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [dashboardMonth, setDashboardMonth] = useState<string>("all");
@@ -1623,8 +1626,40 @@ export default function App() {
                     </div>
 
                     <div className="bg-stone-50 p-4 rounded-xl border border-stone-200">
-                      <h3 className="text-sm font-medium text-stone-800 mb-3">a. 若有加購升級封蠟貼紙，請選擇款式（若使用方案附贈的燙金貼紙請跳過此題）</h3>
-                      <img src="https://images.unsplash.com/photo-1583337130417-3346a1be7dee?auto=format&fit=crop&w=800&q=80" alt="Wax Seal Options" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-medium text-stone-800">a. 若有加購升級封蠟貼紙，請選擇款式（若使用方案附贈的燙金貼紙請跳過此題）</h3>
+                        {currentUser && (
+                          <label className="cursor-pointer bg-white border border-stone-200 shadow-sm text-stone-600 px-2 py-1 rounded text-xs hover:bg-stone-50 flex items-center gap-1 transition-colors">
+                            <Upload className="w-3 h-3" />
+                            更換圖片
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onloadend = async () => {
+                                  try {
+                                    const res = await fetch('/api/settings', {
+                                      method: 'PUT',
+                                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                      body: JSON.stringify({ wedding_form_image_a: reader.result })
+                                    });
+                                    if (res.ok) {
+                                      setPublicSettings(prev => ({ ...prev, wedding_form_image_a: reader.result as string }));
+                                      alert('圖片更新成功');
+                                    } else alert('圖片更新失敗');
+                                  } catch(e) { alert('發生錯誤'); }
+                                };
+                                reader.readAsDataURL(file);
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                      <img src={publicSettings.wedding_form_image_a || "https://images.unsplash.com/photo-1583337130417-3346a1be7dee?auto=format&fit=crop&w=800&q=80"} alt="Wax Seal Options" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-medium text-stone-500 mb-1">樣式</label>
@@ -1665,16 +1700,84 @@ export default function App() {
                     </div>
 
                     <div className="bg-stone-50 p-4 rounded-xl border border-stone-200">
-                      <h3 className="text-sm font-medium text-stone-800 mb-1">b. 請填想要的信封顏色</h3>
-                      <p className="text-xs text-stone-500 mb-3">50份以上最多可選兩個顏色</p>
-                      <img src="https://images.unsplash.com/photo-1507608616759-54f48f0af0ee?auto=format&fit=crop&w=800&q=80" alt="Envelope Colors" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
+                      <div className="flex items-start justify-between mb-1">
+                        <div>
+                          <h3 className="text-sm font-medium text-stone-800">b. 請填想要的信封顏色</h3>
+                          <p className="text-xs text-stone-500 mb-3">50份以上最多可選兩個顏色</p>
+                        </div>
+                        {currentUser && (
+                          <label className="cursor-pointer bg-white border border-stone-200 shadow-sm text-stone-600 px-2 py-1 rounded text-xs hover:bg-stone-50 flex items-center gap-1 transition-colors mt-0.5">
+                            <Upload className="w-3 h-3" />
+                            更換圖片
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onloadend = async () => {
+                                  try {
+                                    const res = await fetch('/api/settings', {
+                                      method: 'PUT',
+                                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                      body: JSON.stringify({ wedding_form_image_b: reader.result })
+                                    });
+                                    if (res.ok) {
+                                      setPublicSettings(prev => ({ ...prev, wedding_form_image_b: reader.result as string }));
+                                      alert('圖片更新成功');
+                                    } else alert('圖片更新失敗');
+                                  } catch(e) { alert('發生錯誤'); }
+                                };
+                                reader.readAsDataURL(file);
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                      <img src={publicSettings.wedding_form_image_b || "https://images.unsplash.com/photo-1507608616759-54f48f0af0ee?auto=format&fit=crop&w=800&q=80"} alt="Envelope Colors" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
                       <input type="text" name="envelope_color" value={formData.envelope_color} onChange={handleInputChange} className="w-full px-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-all" placeholder="例：酒紅色" />
                     </div>
 
                     <div className="bg-stone-50 p-4 rounded-xl border border-stone-200">
-                      <h3 className="text-sm font-medium text-stone-800 mb-1">c. 請選擇信封燙金位置</h3>
-                      <p className="text-xs text-stone-500 mb-3">註：套餐贈送『單面』燙印，正面(中文地址)、背面(英文地址)二選一。<br/>雙面燙金 須加購！請私訊加購 完成款項才算成立</p>
-                      <img src="https://images.unsplash.com/photo-1464802686167-b939a6910659?auto=format&fit=crop&w=800&q=80" alt="Foil Positions" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
+                      <div className="flex items-start justify-between mb-1">
+                        <div>
+                          <h3 className="text-sm font-medium text-stone-800">c. 請選擇信封燙金位置</h3>
+                          <p className="text-xs text-stone-500 mb-3">註：套餐贈送『單面』燙印，正面(中文地址)、背面(英文地址)二選一。<br/>雙面燙金 須加購！請私訊加購 完成款項才算成立</p>
+                        </div>
+                        {currentUser && (
+                          <label className="cursor-pointer bg-white border border-stone-200 shadow-sm text-stone-600 px-2 py-1 rounded text-xs hover:bg-stone-50 flex items-center gap-1 transition-colors mt-0.5 shrink-0 ml-2">
+                            <Upload className="w-3 h-3" />
+                            更換圖片
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onloadend = async () => {
+                                  try {
+                                    const res = await fetch('/api/settings', {
+                                      method: 'PUT',
+                                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                      body: JSON.stringify({ wedding_form_image_c: reader.result })
+                                    });
+                                    if (res.ok) {
+                                      setPublicSettings(prev => ({ ...prev, wedding_form_image_c: reader.result as string }));
+                                      alert('圖片更新成功');
+                                    } else alert('圖片更新失敗');
+                                  } catch(e) { alert('發生錯誤'); }
+                                };
+                                reader.readAsDataURL(file);
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                      <img src={publicSettings.wedding_form_image_c || "https://images.unsplash.com/photo-1464802686167-b939a6910659?auto=format&fit=crop&w=800&q=80"} alt="Foil Positions" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
                       <div className="space-y-2">
                         {[
                           "不需要燙金，信封正反面皆為『空白』無燙金資訊。",
