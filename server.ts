@@ -67,7 +67,7 @@ async function startServer() {
 
 const s3 = new S3Client({
   region: "auto",
-  endpoint: process.env.R2_ENDPOINT,
+  endpoint: `https://$process.env.R2_ENDPOINT`,
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY!,
     secretAccessKey: process.env.R2_SECRET_KEY!,
@@ -494,7 +494,8 @@ const db = new DB(pool);
       const templates = await stmt.all();
       res.json(templates);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error("template upload error:", error);
+      res.status(500).json({ error: error?.message || String(error) });
     }
   });
 
