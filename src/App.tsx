@@ -299,14 +299,18 @@ export const processingOptionsSchema: Record<string, {display: string, value: st
   ],
   "Material": [
     {"display": "#300um象牙卡-單卡式套餐", "value": "#300um象牙卡-單卡式套餐"},
+    {"display": "#380um雪綿卡-單卡式套餐", "value": "#380um雪綿卡-單卡式套餐"},
     {"display": "#300um象牙卡-(拱形)單卡式套餐", "value": "#300um象牙卡-(拱形)式套餐"},
-    {"display": "#300um-雙開門式套餐", "value": "#300um-雙開門式套餐"},
+    {"display": "#300um雙面霧-(拱形)單卡式套餐", "value": "#300um雙面霧-(拱形)式套餐"},
+    {"display": "#300um象牙卡-(雙開門式)套餐", "value": "#300um象牙卡-(雙開門式)套餐"},
+    {"display": "#300um雙面霧-單卡式套餐", "value": "#300um雙面霧-單卡式套餐"},
+    {"display": "#300um雙面霧-雙開門式套餐", "value": "#300um雙面霧-雙開門式套餐"},
     {"display": "#300um象牙卡-對折式套餐", "value": "#300um象牙卡-對折式套餐"},
-    {"display": "#300um象牙卡-機票套組(機票+護照)", "value": "#300um象牙卡-機票套組(機票+護照)"},
-    {"display": "#300um象牙卡-抽拉式套組)", "value": "#300um象牙卡-抽拉式套組"},
-    {"display": "#300um象牙卡-珍珠封套組)", "value": "#300um象牙卡-珍珠封套組"},
+    {"display": "#300um雙面霧-對折式套餐", "value": "#300um雙面霧-對折式套餐"},
     {"display": "#2mm厚彩色壓克力套餐", "value": "#2mm厚彩色壓克力套餐"},
     {"display": "#壓克力要霧面的", "value": "#壓克力要霧面的"},
+    {"display": "#手工紙套餐", "value": "#手工紙套餐"},
+    {"display": "#凸版印刷單卡式套餐", "value": "#凸版印刷單卡式套餐"},
     {"display": "#副卡(單面印刷)", "value": "#副卡(單面印刷)"},
     {"display": "#副卡(雙面印刷)", "value": "#副卡(雙面印刷)"},
     {"display": "#透明封套", "value": "#透明封套"},
@@ -322,8 +326,6 @@ export const processingOptionsSchema: Record<string, {display: string, value: st
   ],
   "Envelope": [
     {"display": "#顏色待定", "value": "#顏色待定"},
-    {"display": "#信封燙金-單面", "value": "#信封燙金-單面"},
-    {"display": "#信封燙金-[雙面]", "value": "#信封燙金-[雙面]"},
     {"display": "#酒紅", "value": "#酒紅"},
     {"display": "#杜丹紅", "value": "#杜丹紅"},
     {"display": "#蒼粉", "value": "#蒼粉"},
@@ -348,6 +350,10 @@ export const processingOptionsSchema: Record<string, {display: string, value: st
     {"display": "#深紫色", "value": "#深紫色"},
     {"display": "#10K信封(常用款)", "value": "#10K信封(常用款)"},
     {"display": "#12K信封(扁長型)", "value": "#12K信封(扁長型)"},
+    {"display": "#信封燙金-單面", "value": "#信封燙金-單面"},
+    {"display": "#信封燙金-[雙面]", "value": "#信封燙金-[雙面]"},
+    {"display": "#信封印刷-單面", "value": "#信封印刷-單面"},
+    {"display": "#信封印刷-雙面", "value": "#信封印刷-雙面"},
     {"display": "#正面中式", "value": "#正面中式"},
     {"display": "#背面西式", "value": "#背面西式"},
     {"display": "#燙[銀色]箔", "value": "#燙[銀色]箔"},
@@ -1025,7 +1031,12 @@ export default function App() {
         return;
       }
       const data = await res.json();
-      setSubmissions(data);
+      if (Array.isArray(data)) {
+        setSubmissions(data);
+      } else {
+        console.error("API did not return an array for submissions", data);
+        setSubmissions([]);
+      }
 
       const dRes = await fetch("/api/designers", {
         headers: { Authorization: `Bearer ${authToken}` }
