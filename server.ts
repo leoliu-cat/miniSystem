@@ -13,8 +13,6 @@ import bcrypt from "bcryptjs";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import https from "https";
-import dotenv from "dotenv";
-dotenv.config();
 
 const SECRET_KEY = process.env.JWT_SECRET || "super-secret-key-for-dev";
 
@@ -53,78 +51,155 @@ async function startServer() {
 
   const DATA_DIR = process.env.DATA_DIR || process.cwd();
 
-  // Configure multer for PDF uploads
-  const upload = multer({ 
+  // Configure multer for PDF uploads (in memory for R2)
+  const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
   });
 
-  // Initialize SQLite Database
-  const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
 
+  const isPg = !!process.env.DATABASE_URL;
+  const isS3 = !!process.env.R2_ENDPOINT;
 
-const s3 = new S3Client({
-  region: "auto",
-  endpoint: `https://${process.env.R2_ENDPOINT}`,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY!,
-    secretAccessKey: process.env.R2_SECRET_KEY!,
-  }
-});
+  let pool: any;
+  let db: any;
+  let s3: any;
 
-class DB {
-  constructor(pool) {
-    this.pool = pool;
-  }
-  async exec(sql) {
-    return this.pool.query(sql);
-  }
-  prepare(sql) {
-    let pgSql = sql;
-    let i = 1;
-    while(pgSql.includes('?')) {
-      pgSql = pgSql.replace('?', '$' + i);
-      i++;
+  if (isS3) {
+    s3 = new S3Client({
+      region: "auto",
+      endpoint: process.env.R2_ENDPOINT?.startsWith('https://') 
+        ? process.env.R2_ENDPOINT 
+        : `https://undefined`,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY!,
+        secretAccessKey: process.env.R2_SECRET_KEY!,
+      }
+    });
+  } else {
+    const localTemplatesDir = path.join(DATA_DIR, 'templates');
+    if (!fs.existsSync(localTemplatesDir)) {
+      fs.mkdirSync(localTemplatesDir, { recursive: true });
     }
-    return {
-      run: async (...args) => {
-        const params = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
-        const res = await this.pool.query(pgSql, params);
-        if (pgSql.trim().toUpperCase().startsWith("INSERT") && res.rows[0]) {
-           return { lastInsertRowid: res.rows[0].id || 0, changes: res.rowCount };
+
+    s3 = {
+      send: async (command: any) => {
+        const input = command.input || {};
+        const filePath = input.Key ? path.join(localTemplatesDir, input.Key) : null;
+
+        if (command instanceof PutObjectCommand) {
+          fs.writeFileSync(filePath!, input.Body);
+          return {};
+        } else if (command instanceof GetObjectCommand) {
+          if (!fs.existsSync(filePath!)) {
+            const err: any = new Error('NoSuchKey');
+            err.name = 'NoSuchKey';
+            throw err;
+          }
+          const size = fs.statSync(filePath!).size;
+          return {
+            ContentType: input.Key.endsWith('.svgz') ? 'image/svg+xml' : 'application/pdf',
+            ContentLength: size,
+            Body: fs.createReadStream(filePath!)
+          };
+        } else if (command instanceof DeleteObjectCommand) {
+          if (fs.existsSync(filePath!)) fs.unlinkSync(filePath!);
+          return {};
         }
-        return { changes: res.rowCount };
-      },
-      get: async (...args) => {
-        const params = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
-        const res = await this.pool.query(pgSql, params);
-        return res.rows[0];
-      },
-      all: async (...args) => {
-        const params = args.length === 1 && Array.isArray(args[0]) ? args[0] : args;
-        const res = await this.pool.query(pgSql, params);
-        return res.rows;
       }
     };
   }
-  async transaction(fn) {
-    return async (...args) => {
-      // simplified fake transaction for now
-      return fn(...args);
+
+  if (isPg) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    });
+    db = {
+      prepare: (sql: string) => {
+        return {
+          get: async (...args: any[]) => {
+            let pgSql = sql;
+            let idx = 1;
+            pgSql = pgSql.replace(/\?/g, () => `\$${idx++}`);
+            const { rows } = await pool.query(pgSql, args);
+            return rows[0];
+          },
+          all: async (...args: any[]) => {
+            let pgSql = sql;
+            let idx = 1;
+            pgSql = pgSql.replace(/\?/g, () => `\$${idx++}`);
+            const { rows } = await pool.query(pgSql, args);
+            return rows;
+          },
+          run: async (...args: any[]) => {
+            let pgSql = sql;
+            let idx = 1;
+            pgSql = pgSql.replace(/\?/g, () => `\$${idx++}`);
+            const result = await pool.query(pgSql, args);
+            return { lastInsertRowid: (result.rows[0]?.id || 0), changes: result.rowCount };
+          }
+        };
+      },
+      exec: async (sql: string) => {
+        const pgSql = sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
+                         .replace(/DATETIME/g, 'TIMESTAMP');
+        await pool.query(pgSql);
+      },
+      transaction: async (cb: () => Promise<void>) => {
+        await pool.query('BEGIN');
+        try {
+          await cb();
+          await pool.query('COMMIT');
+        } catch (err) {
+          await pool.query('ROLLBACK');
+          throw err;
+        }
+      },
+      pragma: async (cmd: string) => {
+         console.log('Skipping pragma:', cmd);
+         return [];
+      }
+    };
+  } else {
+    const { default: DatabaseConstructor } = await import('better-sqlite3');
+    const sqliteDb = new DatabaseConstructor(path.join(DATA_DIR, "weddings.db"));
+    sqliteDb.pragma('journal_mode = WAL');
+    
+    db = {
+      prepare: (sql: string) => {
+        const stmt = sqliteDb.prepare(sql);
+        return {
+          get: async (...args: any[]) => stmt.get(...args),
+          all: async (...args: any[]) => stmt.all(...args),
+          run: async (...args: any[]) => {
+             const info = stmt.run(...args);
+             if (info && info.lastInsertRowid && typeof info.lastInsertRowid === 'bigint') {
+                info.lastInsertRowid = Number(info.lastInsertRowid);
+             }
+             return info;
+          }
+        };
+      },
+      exec: async (sql: string) => sqliteDb.exec(sql),
+      transaction: async (cb: () => Promise<void>) => {
+        sqliteDb.exec('BEGIN');
+        try {
+          await cb();
+          sqliteDb.exec('COMMIT');
+        } catch (err) {
+          sqliteDb.exec('ROLLBACK');
+          throw err;
+        }
+      },
+      pragma: async (cmd: string) => sqliteDb.pragma(cmd)
     };
   }
-  pragma(sql){
-     return { all: () => [] };
-  }
-}
-const db = new DB(pool);
 
-  await db.exec(`
+  
+    await db.exec(`
     CREATE TABLE IF NOT EXISTS weddings (
-      id SERIAL PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       groom_name_zh TEXT,
       groom_name_en TEXT,
       bride_name_zh TEXT,
@@ -134,48 +209,7 @@ const db = new DB(pool);
       venue_name TEXT,
       venue_address TEXT,
       template_id TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      contact_source TEXT,
-      social_id TEXT,
-      groom_father_name TEXT,
-      groom_mother_name TEXT,
-      bride_father_name TEXT,
-      bride_mother_name TEXT,
-      grandparents_names TEXT,
-      schedule_tea_ceremony TEXT,
-      schedule_wedding_ceremony TEXT,
-      schedule_welcome_reception TEXT,
-      schedule_lunch_banquet TEXT,
-      schedule_dinner_banquet TEXT,
-      schedule_seeing_off TEXT,
-      invitation_quantity INTEGER,
-      envelope_sender_address TEXT,
-      receiver_name TEXT,
-      receiver_phone TEXT,
-      receiver_address TEXT,
-      email TEXT,
-      schedule_unconfirmed INTEGER,
-      wax_seal_style TEXT,
-      wax_seal_color TEXT,
-      envelope_color TEXT,
-      envelope_foil_position TEXT,
-      envelope_logo TEXT,
-      designer_id INTEGER,
-      status TEXT DEFAULT '新進訂單',
-      order_code TEXT,
-      payment_date TEXT,
-      amount INTEGER,
-      design_deadline TEXT,
-      delivery_date TEXT,
-      tracking_number TEXT,
-      processing_options TEXT,
-      bank_last_5 TEXT,
-      tax INTEGER,
-      invoice_number TEXT,
-      tags TEXT,
-      order_type TEXT DEFAULT 'invitation',
-      unsubscribed INTEGER DEFAULT 0,
-      notes TEXT
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS templates (
@@ -183,15 +217,14 @@ const db = new DB(pool);
       name TEXT,
       filename TEXT,
       filename_back TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS designers (
-      id SERIAL PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       username TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      role TEXT DEFAULT 'designer'
+      password TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -200,7 +233,7 @@ const db = new DB(pool);
     );
 
     CREATE TABLE IF NOT EXISTS quotations (
-      id SERIAL PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       customer_name TEXT,
       ig_handle TEXT,
       email TEXT,
@@ -210,36 +243,13 @@ const db = new DB(pool);
       quotation_data TEXT,
       total_amount INTEGER,
       status TEXT DEFAULT 'pending',
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      notes TEXT
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS marketing_email_logs (
-      id SERIAL PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       wedding_id INTEGER,
-      sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-      
-    CREATE TABLE IF NOT EXISTS expenses (
-      id SERIAL PRIMARY KEY,
-      expense_date TEXT NOT NULL,
-      item_name TEXT NOT NULL,
-      amount INTEGER NOT NULL,
-      category TEXT NOT NULL,
-      notes TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS incomes (
-      id SERIAL PRIMARY KEY,
-      income_date TEXT NOT NULL,
-      item_name TEXT NOT NULL,
-      amount INTEGER NOT NULL,
-      tax INTEGER DEFAULT 0,
-      bank_last_5 TEXT,
-      notes TEXT,
-      invoice_number TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      sent_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
@@ -271,8 +281,60 @@ const db = new DB(pool);
     await db.prepare("INSERT INTO settings (key, value) VALUES ('recommended_tags', ?)").run("已買書約,潛在彌月客,VIP,急件,海外客戶,需特別注意");
   }
 
+  try {
   // Migration: Add new columns if they don't exist
-  /* Migration handled differently or skipped */
+  const columns = await db.prepare("PRAGMA table_info(weddings)").all() as any[];
+  const columnNames = columns.map(c => c.name);
+  
+  const newColumns = [
+    { name: 'contact_source', type: 'TEXT' },
+    { name: 'social_id', type: 'TEXT' },
+    { name: 'groom_father_name', type: 'TEXT' },
+    { name: 'groom_mother_name', type: 'TEXT' },
+    { name: 'bride_father_name', type: 'TEXT' },
+    { name: 'bride_mother_name', type: 'TEXT' },
+    { name: 'grandparents_names', type: 'TEXT' },
+    { name: 'schedule_tea_ceremony', type: 'TEXT' },
+    { name: 'schedule_wedding_ceremony', type: 'TEXT' },
+    { name: 'schedule_welcome_reception', type: 'TEXT' },
+    { name: 'schedule_lunch_banquet', type: 'TEXT' },
+    { name: 'schedule_dinner_banquet', type: 'TEXT' },
+    { name: 'schedule_seeing_off', type: 'TEXT' },
+    { name: 'invitation_quantity', type: 'INTEGER' },
+    { name: 'envelope_sender_address', type: 'TEXT' },
+    { name: 'receiver_name', type: 'TEXT' },
+    { name: 'receiver_phone', type: 'TEXT' },
+    { name: 'receiver_address', type: 'TEXT' },
+    { name: 'email', type: 'TEXT' },
+    { name: 'schedule_unconfirmed', type: 'INTEGER' },
+    { name: 'wax_seal_style', type: 'TEXT' },
+    { name: 'wax_seal_color', type: 'TEXT' },
+    { name: 'envelope_color', type: 'TEXT' },
+    { name: 'envelope_foil_position', type: 'TEXT' },
+    { name: 'envelope_logo', type: 'TEXT' },
+    { name: 'designer_id', type: 'INTEGER' },
+    { name: 'status', type: 'TEXT DEFAULT "新進訂單"' },
+    { name: 'order_code', type: 'TEXT' },
+    { name: 'payment_date', type: 'TEXT' },
+    { name: 'amount', type: 'INTEGER' },
+    { name: 'design_deadline', type: 'TEXT' },
+    { name: 'delivery_date', type: 'TEXT' },
+    { name: 'tracking_number', type: 'TEXT' },
+    { name: 'processing_options', type: 'TEXT' },
+    { name: 'bank_last_5', type: 'TEXT' },
+    { name: 'tax', type: 'INTEGER' },
+    { name: 'invoice_number', type: 'TEXT' },
+    { name: 'tags', type: 'TEXT' },
+    { name: 'order_type', type: 'TEXT DEFAULT "invitation"' },
+    { name: 'unsubscribed', type: 'INTEGER DEFAULT 0' },
+    { name: 'notes', type: 'TEXT' }
+  ];
+
+  for (const col of newColumns) {
+    if (!columnNames.includes(col.name)) {
+      await db.exec(`ALTER TABLE weddings ADD COLUMN ${col.name} ${col.type}`);
+    }
+  }
 
   // Migration: update existing weddings tax to 5% if it is 0 or NULL
   // This ensures existing orders have tax calculated correctly, while allowing future orders to explicitly set tax to 0 if needed.
@@ -290,20 +352,20 @@ const db = new DB(pool);
   // Create expenses table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS expenses (
-      id SERIAL PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       expense_date TEXT NOT NULL,
       item_name TEXT NOT NULL,
       amount INTEGER NOT NULL,
       category TEXT NOT NULL,
       notes TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
   // Create incomes table for manual other incomes
   await db.exec(`
     CREATE TABLE IF NOT EXISTS incomes (
-      id SERIAL PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       income_date TEXT NOT NULL,
       item_name TEXT NOT NULL,
       amount INTEGER NOT NULL,
@@ -311,11 +373,25 @@ const db = new DB(pool);
       bank_last_5 TEXT,
       notes TEXT,
       invoice_number TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
+  // Migration: Add invoice_number to incomes if it doesn't exist
+  const incomeColumns = await db.prepare("PRAGMA table_info(incomes)").all() as any[];
+  if (!incomeColumns.some(c => c.name === 'invoice_number')) {
+    await db.exec("ALTER TABLE incomes ADD COLUMN invoice_number TEXT");
+  }
 
+  // Migration: Add notes to quotations
+  const quotationCols = db.pragma("table_info(quotations)") as any[];
+  if (!quotationCols.find(c => c.name === 'notes')) {
+    await db.exec("ALTER TABLE quotations ADD COLUMN notes TEXT");
+  }
+
+  } catch (migrationErr) {
+  console.warn('Skipping SQLite migrations');
+}
 
   // Seed default templates if none exist
   // Removed default templates as per user request
@@ -323,13 +399,18 @@ const db = new DB(pool);
   // Seed default designers if none exist
   const designerCount = await db.prepare("SELECT COUNT(*) as count FROM designers").get() as any;
   if (designerCount.count === 0) {
-    const insertDesigner = db.prepare("INSERT INTO designers (name, username, password) VALUES (?, ?, ?) RETURNING id");
+    const insertDesigner = db.prepare("INSERT INTO designers (name, username, password) VALUES (?, ?, ?)");
     const defaultPassword = bcrypt.hashSync("password123", 10);
-    await insertDesigner.run("Leo", "leo", defaultPassword);
-    await insertDesigner.run("Joanne", "joanne", defaultPassword);
+    insertDesigner.run("Leo", "leo", defaultPassword);
+    insertDesigner.run("Joanne", "joanne", defaultPassword);
   }
 
-
+  // Migration: Add role column to designers
+  const designerColumns = await db.prepare("PRAGMA table_info(designers)").all() as any[];
+  const designerColumnNames = designerColumns.map(c => c.name);
+  if (!designerColumnNames.includes('role')) {
+    await db.prepare("ALTER TABLE designers ADD COLUMN role TEXT DEFAULT 'designer'").run();
+  }
 
   // Ensure admin account exists
   const adminExists = await db.prepare("SELECT id FROM designers WHERE username = 'admin'").get();
@@ -339,7 +420,7 @@ const db = new DB(pool);
   }
 
   // Auth Middleware
-  const authenticateToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authenticateToken = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const authHeader = req.headers['authorization'];
     const token = (authHeader && authHeader.split(' ')[1]) || (req.query.token as string);
     if (token == null) return res.sendStatus(401);
@@ -387,7 +468,7 @@ const db = new DB(pool);
         return res.status(400).json({ error: "此帳號已存在" });
       }
       const hashedPassword = bcrypt.hashSync(password, 10);
-      const info = await db.prepare("INSERT INTO designers (name, username, password) VALUES (?, ?, ?) RETURNING id").run(name, username, hashedPassword);
+      const info = await db.prepare("INSERT INTO designers (name, username, password) VALUES (?, ?, ?)").run(name, username, hashedPassword);
       res.json({ success: true, id: info.lastInsertRowid });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -468,7 +549,7 @@ const db = new DB(pool);
       
       const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
       
-      await (await db.transaction(async () => {
+      await db.transaction(async () => {
         if (email_subject !== undefined) await stmt.run('email_subject', email_subject);
         if (email_body !== undefined) await stmt.run('email_body', email_body);
         if (recommended_tags !== undefined) await stmt.run('recommended_tags', recommended_tags);
@@ -481,7 +562,7 @@ const db = new DB(pool);
         if (wedding_form_image_a !== undefined) await stmt.run('wedding_form_image_a', wedding_form_image_a);
         if (wedding_form_image_b !== undefined) await stmt.run('wedding_form_image_b', wedding_form_image_b);
         if (wedding_form_image_c !== undefined) await stmt.run('wedding_form_image_c', wedding_form_image_c);
-      }))();
+      })();
       
       res.json({ success: true });
     } catch (error: any) {
@@ -495,8 +576,7 @@ const db = new DB(pool);
       const templates = await stmt.all();
       res.json(templates);
     } catch (error: any) {
-      console.error("template upload error:", error);
-      res.status(500).json({ error: error?.message || String(error) });
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -512,23 +592,26 @@ const db = new DB(pool);
         return res.status(400).json({ error: "Template name is required" });
       }
 
-      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-      const ext = path.extname(file.originalname).toLowerCase();
-      const filename = "template-" + uniqueSuffix + ext;
-      const id = "template-" + uniqueSuffix;
+      const id = Date.now().toString();
+      const filename = `template-${id}.pdf`;
+      const bucketName = process.env.R2_BUCKET!;
 
-      const uploadParams = {
-        Bucket: process.env.R2_BUCKET!,
-        Key: filename,
-        Body: file.buffer,
-        ContentType: file.mimetype,
-      };
-      await s3.send(new PutObjectCommand(uploadParams));
+      try {
+        await s3.send(new PutObjectCommand({
+          Bucket: bucketName,
+          Key: filename,
+          Body: file.buffer,
+          ContentType: 'application/pdf',
+        }));
+      } catch (s3Error: any) {
+        console.error("S3 Upload Error:", s3Error);
+        return res.status(500).json({ error: "Error uploading file to storage" });
+      }
 
       const stmt = db.prepare("INSERT INTO templates (id, name, filename, filename_back) VALUES (?, ?, ?, ?)");
       await stmt.run(id, name, filename, null);
 
-      res.json({ success: true, id, name, filename: filename });
+      res.json({ success: true, id, name, filename });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -548,22 +631,7 @@ const db = new DB(pool);
       let newFilename = currentTemplate.filename;
 
       if (file) {
-        const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-        const ext = path.extname(file.originalname).toLowerCase();
-        newFilename = "template-" + uniqueSuffix + ext;
-        
-        const uploadParams = {
-          Bucket: process.env.R2_BUCKET!,
-          Key: newFilename,
-          Body: file.buffer,
-          ContentType: file.mimetype,
-        };
-        await s3.send(new PutObjectCommand(uploadParams));
-        
-        // Optional: delete old file from S3!
-        try {
-           await s3.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: currentTemplate.filename }));
-        } catch (e) {}
+        newFilename = file.filename;
       }
 
       const stmt = db.prepare("UPDATE templates SET name = ?, filename = ?, filename_back = ? WHERE id = ?");
@@ -577,12 +645,18 @@ const db = new DB(pool);
   app.delete("/api/templates/:id", authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
-      
-      const currentTemplate = await db.prepare("SELECT * FROM templates WHERE id = ?").get(id) as any;
-      if (currentTemplate) {
-         try { await s3.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: currentTemplate.filename })); } catch (e) {}
+      const getStmt = db.prepare("SELECT filename FROM templates WHERE id = ?");
+      const template = await getStmt.get(id) as any;
+      if (template?.filename) {
+         try {
+           await s3.send(new DeleteObjectCommand({
+             Bucket: process.env.R2_BUCKET!,
+             Key: template.filename,
+           }));
+         } catch (e) {
+           console.error("Failed to delete from S3:", e);
+         }
       }
-
       const stmt = db.prepare("DELETE FROM templates WHERE id = ?");
       await stmt.run(id);
       res.json({ success: true });
@@ -637,7 +711,7 @@ const db = new DB(pool);
           invitation_quantity, wax_seal_style, wax_seal_color,
           envelope_color, envelope_foil_position, envelope_logo,
           processing_options, order_code, status, order_type, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '等待填寫資料', ?, ?) RETURNING id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '等待填寫資料', ?, ?)
       `);
 
       const info = await stmt.run(
@@ -944,7 +1018,7 @@ const db = new DB(pool);
           envelope_sender_address, receiver_name, receiver_phone, receiver_address,
           email, schedule_unconfirmed, wax_seal_style, wax_seal_color,
           envelope_color, envelope_foil_position, envelope_logo
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const info = await stmt.run(
@@ -1300,7 +1374,7 @@ const db = new DB(pool);
     try {
       const stmt = db.prepare(`
         SELECT w.*, 
-               (SELECT COUNT(*) FROM marketing_email_logs m WHERE m.wedding_id = w.id AND m.sent_at >= NOW() - INTERVAL '30 days') as marketing_count_30d,
+               (SELECT COUNT(*) FROM marketing_email_logs m WHERE m.wedding_id = w.id AND m.sent_at >= datetime('now', '-30 days')) as marketing_count_30d,
                (SELECT MAX(sent_at) FROM marketing_email_logs m WHERE m.wedding_id = w.id) as last_marketing_sent_at
         FROM weddings w 
         ORDER BY w.created_at DESC
@@ -1446,7 +1520,7 @@ const db = new DB(pool);
 
       // Read PDF Template
       const templateStmt = db.prepare("SELECT * FROM templates WHERE id = ?");
-      const template = await templateStmt.get(wedding.template_id) as any;
+      const template = templateStmt.get(wedding.template_id) as any;
 
       if (!template) {
         return res.status(404).json({ error: "Template not found in database" });
@@ -1454,50 +1528,57 @@ const db = new DB(pool);
 
       const targetFilename = template.filename;
       
-      try {
-        const getCommand = new GetObjectCommand({
-          Bucket: process.env.R2_BUCKET!,
-          Key: targetFilename
-        });
-        const s3Item = await s3.send(getCommand);
-        
-        res.setHeader("Content-Type", "application/pdf");
-        const downloadFilename = `template_${targetFilename}`;
-        res.setHeader("Content-Disposition", `attachment; filename="${downloadFilename}"`);
-        
-        if (s3Item.Body) {
-           (s3Item.Body as any).pipe(res);
-        } else {
-           res.status(404).json({ error: "File empty" });
-        }
-      } catch (err) {
-        return res.status(404).json({ error: "Template file not found in R2" });
+      const templatePath = path.join(DATA_DIR, "templates", targetFilename);
+      if (!fs.existsSync(templatePath)) {
+        return res.status(404).json({ error: "Template file not found" });
       }
+
+      const existingPdfBytes = fs.readFileSync(templatePath);
+      
+      // Return the original PDF file without modifying it with pdf-lib.
+      // This preserves the embedded Illustrator data (PieceInfo) so the text remains fully editable
+      // and doesn't get converted to outlines when opened in Illustrator.
+      res.setHeader("Content-Type", "application/pdf");
+      const downloadFilename = `template_${targetFilename}`;
+      res.setHeader("Content-Disposition", `attachment; filename="${downloadFilename}"`);
+      res.send(existingPdfBytes);
     } catch (error: any) {
       console.error("Download error:", error);
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Serve templates statically from R2
+  // Serve templates via S3 proxy route
   app.get("/templates/:filename", async (req, res) => {
-    const filename = req.params.filename;
-    if (filename.endsWith('.svgz')) {
-      res.setHeader('Content-Encoding', 'gzip');
-      res.setHeader('Content-Type', 'image/svg+xml');
-    }
     try {
-      const getCommand = new GetObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: filename });
-      const s3Item = await s3.send(getCommand);
-      if (s3Item.ContentType) res.setHeader("Content-Type", s3Item.ContentType);
-      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-      if (s3Item.Body) {
-        (s3Item.Body as any).pipe(res);
-      } else {
-        res.status(404).end();
+      const filename = req.params.filename;
+      const bucketName = process.env.R2_BUCKET!;
+      
+      const s3Response = await s3.send(new GetObjectCommand({
+        Bucket: bucketName,
+        Key: filename,
+      }));
+      
+      if (s3Response.ContentType) {
+        res.setHeader('Content-Type', s3Response.ContentType);
       }
-    } catch(e) {
-      res.status(404).end();
+      if (s3Response.ContentLength) {
+        res.setHeader('Content-Length', s3Response.ContentLength);
+      }
+      if (filename.endsWith('.svgz')) {
+        res.setHeader('Content-Encoding', 'gzip');
+        res.setHeader('Content-Type', 'image/svg+xml');
+      }
+      
+      const stream = s3Response.Body as NodeJS.ReadableStream;
+      stream.pipe(res);
+    } catch (error: any) {
+      if (error.name === 'NoSuchKey') {
+        res.status(404).send('Not Found');
+      } else {
+        console.error("S3 Get Error:", error);
+        res.status(500).send('Storage Error');
+      }
     }
   });
 
