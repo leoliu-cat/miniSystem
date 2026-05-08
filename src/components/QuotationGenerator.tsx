@@ -385,10 +385,16 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
 
     // 上機費計算
     let setupFee = 0;
-    if (calcQty >= 30 && calcQty <= 50) setupFee = 2000;
-    else if (calcQty >= 51 && calcQty <= 79) setupFee = 1500;
-    else if (calcQty >= 80 && calcQty <= 99) setupFee = 1000;
-    else setupFee = 0;
+    const isAcrylic = pkg && pkg.name && pkg.name.includes('透明壓克力');
+    if (isAcrylic) {
+      if (calcQty >= 30 && calcQty < 50) setupFee = 2000;
+      else setupFee = 0;
+    } else {
+      if (calcQty >= 30 && calcQty <= 50) setupFee = 2000;
+      else if (calcQty >= 51 && calcQty <= 79) setupFee = 1500;
+      else if (calcQty >= 80 && calcQty <= 99) setupFee = 1000;
+      else setupFee = 0;
+    }
 
     // 折扣計算
     let discountRate = 1;
@@ -460,10 +466,19 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
     }
 
     text += `【上機版費】\n`;
+    const isAcrylic = pkg && pkg.name && pkg.name.includes('透明壓克力');
     if (setupFee === 0) {
-      text += `100份以上免版費 = NT$ 0\n\n`;
+      if (isAcrylic) {
+        text += `滿50份以上免版費 = NT$ 0\n\n`;
+      } else {
+        text += `100份以上免版費 = NT$ 0\n\n`;
+      }
     } else {
-      text += `未滿100份基本上機費 = NT$ ${setupFee.toLocaleString()}\n\n`;
+      if (isAcrylic) {
+        text += `未滿50份基本上機費 = NT$ ${setupFee.toLocaleString()}\n\n`;
+      } else {
+        text += `未滿100份基本上機費 = NT$ ${setupFee.toLocaleString()}\n\n`;
+      }
     }
 
     if (discountAmount > 0) {

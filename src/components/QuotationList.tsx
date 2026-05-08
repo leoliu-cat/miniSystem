@@ -390,8 +390,7 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
             <thead>
               <tr className="bg-stone-50 border-b border-stone-200 text-sm text-stone-500">
                 <th className="p-4 font-medium">建立日期</th>
-                <th className="p-4 font-medium">客戶名稱 / 社群帳號</th>
-                <th className="p-4 font-medium">聯絡方式</th>
+                <th className="p-4 font-medium">名稱</th>
                 <th className="p-4 font-medium">備註</th>
                 <th className="p-4 font-medium">總金額</th>
                 <th className="p-4 font-medium">狀態</th>
@@ -418,11 +417,7 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
                       <div className="font-medium text-stone-800">{quote.customer_name || '未填寫'}</div>
                       <div className="text-stone-500 text-xs">{quote.ig_handle || '無社群帳號'}</div>
                     </td>
-                    <td className="p-4 text-stone-600">
-                      <div>{quote.email || '-'}</div>
-                      <div>{quote.phone || '-'}</div>
-                    </td>
-                    <td className="p-4 text-stone-600 max-w-xs truncate" title={quote.notes || ''}>
+                    <td className="p-4 text-stone-600 max-w-[160px] truncate" title={quote.notes || ''}>
                       {quote.notes || '-'}
                     </td>
                     <td className="p-4 font-medium text-stone-800">

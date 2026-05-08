@@ -13,6 +13,29 @@ import bcrypt from "bcryptjs";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import https from "https";
+import dns from "dns";
+
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder("ipv4first");
+}
+
+/**
+ * Resolves the given hostname to an IPv4 address.
+ * If resolution fails, it returns the original hostname.
+ */
+async function getIpv4Host(hostname: string | undefined): Promise<string> {
+  if (!hostname) return '';
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      dns.resolve4(hostname, (err, addresses) => {
+        if (err || !addresses || addresses.length === 0) resolve(hostname);
+        else resolve(addresses[0]);
+      });
+    });
+  } catch (e) {
+    return hostname;
+  }
+}
 
 const SECRET_KEY = process.env.JWT_SECRET || "super-secret-key-for-dev";
 
@@ -46,8 +69,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '100mb' }));
-  app.use(express.urlencoded({ limit: '100mb', extended: true }));
+  app.use(express.json({ limit: '5mb' }));
+  app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
   const DATA_DIR = process.env.DATA_DIR || process.cwd();
 
@@ -65,12 +88,49 @@ async function startServer() {
   let db: any;
   let s3: any;
 
+  // --- Simple In-Memory Cache System ---
+  interface CacheEntry {
+    data: any;
+    timestamp: number;
+  }
+  const memCache: Record<string, CacheEntry> = {};
+  const CACHE_TTL = 5 * 60 * 1000;
+
+  const getCache = (key: string) => {
+    const entry = memCache[key];
+    if (entry && Date.now() - entry.timestamp < CACHE_TTL) return entry.data;
+    return null;
+  };
+
+  const setCache = (key: string, data: any) => {
+    memCache[key] = { data, timestamp: Date.now() };
+  };
+
+  const invalidateCache = (prefix: string) => {
+    for (const key in memCache) {
+      if (key.startsWith(prefix)) delete memCache[key];
+    }
+  };
+
+  const invalidateCacheBySql = (sql: string) => {
+    const s = sql.toUpperCase();
+    if (s.includes('WEDDINGS') || s.includes('ORDERS') || s.includes('MARKETING_EMAIL_LOGS')) invalidateCache('weddings_');
+    if (s.includes('DESIGNERS')) invalidateCache('designers_');
+    if (s.includes('EXPENSES')) invalidateCache('expenses_');
+    if (s.includes('INCOMES')) invalidateCache('incomes_');
+    if (s.includes('SETTINGS')) invalidateCache('settings');
+    if (s.includes('TEMPLATES')) invalidateCache('templates_');
+    if (s.includes('QUOTATIONS')) invalidateCache('quotations_');
+  };
+
   if (isS3) {
+    let endpoint = process.env.R2_ENDPOINT!;
+    if (!endpoint.startsWith('http')) {
+      endpoint = `https://${endpoint}`;
+    }
     s3 = new S3Client({
       region: "auto",
-      endpoint: process.env.R2_ENDPOINT?.startsWith('https://') 
-        ? process.env.R2_ENDPOINT 
-        : `https://undefined`,
+      endpoint,
       credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY!,
         secretAccessKey: process.env.R2_SECRET_KEY!,
@@ -136,7 +196,11 @@ async function startServer() {
             let pgSql = sql;
             let idx = 1;
             pgSql = pgSql.replace(/\?/g, () => `\$${idx++}`);
+            if (pgSql.trim().toUpperCase().startsWith('INSERT') && !pgSql.toUpperCase().includes('RETURNING')) {
+              pgSql += ' RETURNING *';
+            }
             const result = await pool.query(pgSql, args);
+            invalidateCacheBySql(sql);
             return { lastInsertRowid: (result.rows[0]?.id || 0), changes: result.rowCount };
           }
         };
@@ -145,15 +209,27 @@ async function startServer() {
         const pgSql = sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'SERIAL PRIMARY KEY')
                          .replace(/DATETIME/g, 'TIMESTAMP');
         await pool.query(pgSql);
+        invalidateCacheBySql(sql);
       },
       transaction: async (cb: () => Promise<void>) => {
-        await pool.query('BEGIN');
+        const client = await pool.connect();
         try {
-          await cb();
-          await pool.query('COMMIT');
-        } catch (err) {
-          await pool.query('ROLLBACK');
-          throw err;
+          await client.query('BEGIN');
+          // Temporarily monkey-patch the pool to use this client inside the callback
+          const originalQuery = pool.query.bind(pool);
+          pool.query = client.query.bind(client) as any;
+          
+          try {
+            await cb();
+            await client.query('COMMIT');
+          } catch(err) {
+            await client.query('ROLLBACK');
+            throw err;
+          } finally {
+            pool.query = originalQuery;
+          }
+        } finally {
+          client.release();
         }
       },
       pragma: async (cmd: string) => {
@@ -177,11 +253,15 @@ async function startServer() {
              if (info && info.lastInsertRowid && typeof info.lastInsertRowid === 'bigint') {
                 info.lastInsertRowid = Number(info.lastInsertRowid);
              }
+             invalidateCacheBySql(sql);
              return info;
           }
         };
       },
-      exec: async (sql: string) => sqliteDb.exec(sql),
+      exec: async (sql: string) => {
+        sqliteDb.exec(sql);
+        invalidateCacheBySql(sql);
+      },
       transaction: async (cb: () => Promise<void>) => {
         sqliteDb.exec('BEGIN');
         try {
@@ -196,7 +276,7 @@ async function startServer() {
     };
   }
 
-  
+  try {
     await db.exec(`
     CREATE TABLE IF NOT EXISTS weddings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,6 +289,47 @@ async function startServer() {
       venue_name TEXT,
       venue_address TEXT,
       template_id TEXT,
+      contact_source TEXT,
+      social_id TEXT,
+      groom_father_name TEXT,
+      groom_mother_name TEXT,
+      bride_father_name TEXT,
+      bride_mother_name TEXT,
+      grandparents_names TEXT,
+      schedule_tea_ceremony TEXT,
+      schedule_wedding_ceremony TEXT,
+      schedule_welcome_reception TEXT,
+      schedule_lunch_banquet TEXT,
+      schedule_dinner_banquet TEXT,
+      schedule_seeing_off TEXT,
+      invitation_quantity INTEGER,
+      envelope_sender_address TEXT,
+      receiver_name TEXT,
+      receiver_phone TEXT,
+      receiver_address TEXT,
+      email TEXT,
+      schedule_unconfirmed INTEGER,
+      wax_seal_style TEXT,
+      wax_seal_color TEXT,
+      envelope_color TEXT,
+      envelope_foil_position TEXT,
+      envelope_logo TEXT,
+      designer_id INTEGER,
+      status TEXT DEFAULT '新進訂單',
+      order_code TEXT,
+      payment_date TEXT,
+      amount INTEGER,
+      design_deadline TEXT,
+      delivery_date TEXT,
+      tracking_number TEXT,
+      processing_options TEXT,
+      bank_last_5 TEXT,
+      tax INTEGER,
+      invoice_number TEXT,
+      tags TEXT,
+      order_type TEXT DEFAULT 'invitation',
+      unsubscribed INTEGER DEFAULT 0,
+      notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -217,6 +338,8 @@ async function startServer() {
       name TEXT,
       filename TEXT,
       filename_back TEXT,
+      nas_url TEXT,
+      nas_smb TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -224,7 +347,8 @@ async function startServer() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       username TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL
+      password TEXT NOT NULL,
+      role TEXT DEFAULT 'designer'
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -243,6 +367,7 @@ async function startServer() {
       quotation_data TEXT,
       total_amount INTEGER,
       status TEXT DEFAULT 'pending',
+      notes TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -251,7 +376,41 @@ async function startServer() {
       wedding_id INTEGER,
       sent_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      expense_date TEXT NOT NULL,
+      item_name TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      category TEXT NOT NULL,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS incomes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      income_date TEXT NOT NULL,
+      item_name TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      tax INTEGER DEFAULT 0,
+      bank_last_5 TEXT,
+      notes TEXT,
+      invoice_number TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
+
+  try {
+    await db.exec(`ALTER TABLE templates ADD COLUMN nas_url TEXT;`);
+  } catch(e: any) {
+    // Column might already exist
+  }
+  
+  try {
+    await db.exec(`ALTER TABLE templates ADD COLUMN nas_smb TEXT;`);
+  } catch(e: any) {
+    // Column might already exist
+  }
 
   // Seed default email template
   const defaultSubjectTemplate = "您的喜帖快遞已寄出 - 訂單 #{{order_id}}";
@@ -282,141 +441,153 @@ async function startServer() {
   }
 
   try {
-  // Migration: Add new columns if they don't exist
-  const columns = await db.prepare("PRAGMA table_info(weddings)").all() as any[];
-  const columnNames = columns.map(c => c.name);
-  
-  const newColumns = [
-    { name: 'contact_source', type: 'TEXT' },
-    { name: 'social_id', type: 'TEXT' },
-    { name: 'groom_father_name', type: 'TEXT' },
-    { name: 'groom_mother_name', type: 'TEXT' },
-    { name: 'bride_father_name', type: 'TEXT' },
-    { name: 'bride_mother_name', type: 'TEXT' },
-    { name: 'grandparents_names', type: 'TEXT' },
-    { name: 'schedule_tea_ceremony', type: 'TEXT' },
-    { name: 'schedule_wedding_ceremony', type: 'TEXT' },
-    { name: 'schedule_welcome_reception', type: 'TEXT' },
-    { name: 'schedule_lunch_banquet', type: 'TEXT' },
-    { name: 'schedule_dinner_banquet', type: 'TEXT' },
-    { name: 'schedule_seeing_off', type: 'TEXT' },
-    { name: 'invitation_quantity', type: 'INTEGER' },
-    { name: 'envelope_sender_address', type: 'TEXT' },
-    { name: 'receiver_name', type: 'TEXT' },
-    { name: 'receiver_phone', type: 'TEXT' },
-    { name: 'receiver_address', type: 'TEXT' },
-    { name: 'email', type: 'TEXT' },
-    { name: 'schedule_unconfirmed', type: 'INTEGER' },
-    { name: 'wax_seal_style', type: 'TEXT' },
-    { name: 'wax_seal_color', type: 'TEXT' },
-    { name: 'envelope_color', type: 'TEXT' },
-    { name: 'envelope_foil_position', type: 'TEXT' },
-    { name: 'envelope_logo', type: 'TEXT' },
-    { name: 'designer_id', type: 'INTEGER' },
-    { name: 'status', type: 'TEXT DEFAULT "新進訂單"' },
-    { name: 'order_code', type: 'TEXT' },
-    { name: 'payment_date', type: 'TEXT' },
-    { name: 'amount', type: 'INTEGER' },
-    { name: 'design_deadline', type: 'TEXT' },
-    { name: 'delivery_date', type: 'TEXT' },
-    { name: 'tracking_number', type: 'TEXT' },
-    { name: 'processing_options', type: 'TEXT' },
-    { name: 'bank_last_5', type: 'TEXT' },
-    { name: 'tax', type: 'INTEGER' },
-    { name: 'invoice_number', type: 'TEXT' },
-    { name: 'tags', type: 'TEXT' },
-    { name: 'order_type', type: 'TEXT DEFAULT "invitation"' },
-    { name: 'unsubscribed', type: 'INTEGER DEFAULT 0' },
-    { name: 'notes', type: 'TEXT' }
-  ];
+    const newColumns = [
+      { name: 'contact_source', type: 'TEXT' },
+      { name: 'social_id', type: 'TEXT' },
+      { name: 'groom_father_name', type: 'TEXT' },
+      { name: 'groom_mother_name', type: 'TEXT' },
+      { name: 'bride_father_name', type: 'TEXT' },
+      { name: 'bride_mother_name', type: 'TEXT' },
+      { name: 'grandparents_names', type: 'TEXT' },
+      { name: 'schedule_tea_ceremony', type: 'TEXT' },
+      { name: 'schedule_wedding_ceremony', type: 'TEXT' },
+      { name: 'schedule_welcome_reception', type: 'TEXT' },
+      { name: 'schedule_lunch_banquet', type: 'TEXT' },
+      { name: 'schedule_dinner_banquet', type: 'TEXT' },
+      { name: 'schedule_seeing_off', type: 'TEXT' },
+      { name: 'invitation_quantity', type: 'INTEGER' },
+      { name: 'envelope_sender_address', type: 'TEXT' },
+      { name: 'receiver_name', type: 'TEXT' },
+      { name: 'receiver_phone', type: 'TEXT' },
+      { name: 'receiver_address', type: 'TEXT' },
+      { name: 'email', type: 'TEXT' },
+      { name: 'schedule_unconfirmed', type: 'INTEGER' },
+      { name: 'wax_seal_style', type: 'TEXT' },
+      { name: 'wax_seal_color', type: 'TEXT' },
+      { name: 'envelope_color', type: 'TEXT' },
+      { name: 'envelope_foil_position', type: 'TEXT' },
+      { name: 'envelope_logo', type: 'TEXT' },
+      { name: 'designer_id', type: 'INTEGER' },
+      { name: 'status', type: "TEXT DEFAULT '新進訂單'" },
+      { name: 'order_code', type: 'TEXT' },
+      { name: 'payment_date', type: 'TEXT' },
+      { name: 'amount', type: 'INTEGER' },
+      { name: 'design_deadline', type: 'TEXT' },
+      { name: 'delivery_date', type: 'TEXT' },
+      { name: 'tracking_number', type: 'TEXT' },
+      { name: 'processing_options', type: 'TEXT' },
+      { name: 'bank_last_5', type: 'TEXT' },
+      { name: 'tax', type: 'INTEGER' },
+      { name: 'invoice_number', type: 'TEXT' },
+      { name: 'tags', type: 'TEXT' },
+      { name: 'order_type', type: "TEXT DEFAULT 'invitation'" },
+      { name: 'unsubscribed', type: 'INTEGER DEFAULT 0' },
+      { name: 'notes', type: 'TEXT' },
+      { name: 'shipped_date', type: 'TEXT' }
+    ];
 
-  for (const col of newColumns) {
-    if (!columnNames.includes(col.name)) {
-      await db.exec(`ALTER TABLE weddings ADD COLUMN ${col.name} ${col.type}`);
+    for (const col of newColumns) {
+      try {
+        await db.exec(`ALTER TABLE weddings ADD COLUMN ${col.name} ${col.type}`);
+      } catch (e) {
+        // Ignore if column already exists
+      }
     }
-  }
 
-  // Migration: update existing weddings tax to 5% if it is 0 or NULL
-  // This ensures existing orders have tax calculated correctly, while allowing future orders to explicitly set tax to 0 if needed.
-  await db.exec(`
-    UPDATE weddings 
-    SET tax = ROUND(amount * 0.05) 
-    WHERE tax IS NULL OR tax = 0
-  `);
+    // Migration: update existing weddings tax to 5% if it is 0 or NULL
+    try {
+      await db.exec(`
+        UPDATE weddings 
+        SET tax = ROUND(amount * 0.05) 
+        WHERE tax IS NULL OR tax = 0
+      `);
+    } catch(e) {}
 
-  await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_code ON weddings(order_code) WHERE order_code IS NOT NULL;");
+    try {
+      await db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_order_code ON weddings(order_code) WHERE order_code IS NOT NULL;");
+    } catch(e) {}
 
-  // Migration: delete default templates
-  await db.prepare("DELETE FROM templates WHERE id IN ('template1', 'template2')").run();
+    // Migration: delete default templates
+    try {
+      await db.prepare("DELETE FROM templates WHERE id IN ('template1', 'template2')").run();
+    } catch (e) {}
 
-  // Create expenses table
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS expenses (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      expense_date TEXT NOT NULL,
-      item_name TEXT NOT NULL,
-      amount INTEGER NOT NULL,
-      category TEXT NOT NULL,
-      notes TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+    // Create expenses table
+    try {
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS expenses (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          expense_date TEXT NOT NULL,
+          item_name TEXT NOT NULL,
+          amount INTEGER NOT NULL,
+          category TEXT NOT NULL,
+          notes TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+    } catch (e) {}
 
-  // Create incomes table for manual other incomes
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS incomes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      income_date TEXT NOT NULL,
-      item_name TEXT NOT NULL,
-      amount INTEGER NOT NULL,
-      tax INTEGER DEFAULT 0,
-      bank_last_5 TEXT,
-      notes TEXT,
-      invoice_number TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+    // Create incomes table
+    try {
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS incomes (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          income_date TEXT NOT NULL,
+          item_name TEXT NOT NULL,
+          amount INTEGER NOT NULL,
+          tax INTEGER DEFAULT 0,
+          bank_last_5 TEXT,
+          notes TEXT,
+          invoice_number TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+    } catch (e) {}
 
-  // Migration: Add invoice_number to incomes if it doesn't exist
-  const incomeColumns = await db.prepare("PRAGMA table_info(incomes)").all() as any[];
-  if (!incomeColumns.some(c => c.name === 'invoice_number')) {
-    await db.exec("ALTER TABLE incomes ADD COLUMN invoice_number TEXT");
-  }
+    // Migration: Add invoice_number to incomes if it doesn't exist
+    try {
+      await db.exec("ALTER TABLE incomes ADD COLUMN invoice_number TEXT");
+    } catch(e) {}
 
-  // Migration: Add notes to quotations
-  const quotationCols = db.pragma("table_info(quotations)") as any[];
-  if (!quotationCols.find(c => c.name === 'notes')) {
-    await db.exec("ALTER TABLE quotations ADD COLUMN notes TEXT");
-  }
+    // Migration: Add notes to quotations
+    try {
+      await db.exec("ALTER TABLE quotations ADD COLUMN notes TEXT");
+    } catch(e) {}
+
+    // Migration: Add role column to designers
+    try {
+      await db.exec("ALTER TABLE designers ADD COLUMN role TEXT DEFAULT 'designer'");
+    } catch(e) {}
 
   } catch (migrationErr) {
-  console.warn('Skipping SQLite migrations');
-}
+    console.warn('Skipping migrations', migrationErr);
+  }
 
   // Seed default templates if none exist
   // Removed default templates as per user request
 
   // Seed default designers if none exist
   const designerCount = await db.prepare("SELECT COUNT(*) as count FROM designers").get() as any;
-  if (designerCount.count === 0) {
+  if (designerCount.count == 0) {
     const insertDesigner = db.prepare("INSERT INTO designers (name, username, password) VALUES (?, ?, ?)");
     const defaultPassword = bcrypt.hashSync("password123", 10);
-    insertDesigner.run("Leo", "leo", defaultPassword);
-    insertDesigner.run("Joanne", "joanne", defaultPassword);
-  }
-
-  // Migration: Add role column to designers
-  const designerColumns = await db.prepare("PRAGMA table_info(designers)").all() as any[];
-  const designerColumnNames = designerColumns.map(c => c.name);
-  if (!designerColumnNames.includes('role')) {
-    await db.prepare("ALTER TABLE designers ADD COLUMN role TEXT DEFAULT 'designer'").run();
+    await insertDesigner.run("Leo", "leo", defaultPassword);
+    await insertDesigner.run("Joanne", "joanne", defaultPassword);
   }
 
   // Ensure admin account exists
-  const adminExists = await db.prepare("SELECT id FROM designers WHERE username = 'admin'").get();
-  if (!adminExists) {
-    const adminPassword = bcrypt.hashSync("admin123", 10);
-    await db.prepare("INSERT INTO designers (name, username, password, role) VALUES (?, ?, ?, ?)").run("管理員", "admin", adminPassword, "admin");
+  try {
+    const adminExists = await db.prepare("SELECT id FROM designers WHERE username = 'admin'").get();
+    if (!adminExists) {
+      const adminPassword = bcrypt.hashSync("admin123", 10);
+      await db.prepare("INSERT INTO designers (name, username, password, role) VALUES (?, ?, ?, ?)").run("管理員", "admin", adminPassword, "admin");
+    }
+  } catch (e) {
+    console.warn("Skipping admin creation:", e);
+  }
+  
+  } catch (dbInitErr) {
+    console.error("Database initialization failed (quota exceeded or connection error):", dbInitErr);
   }
 
   // Auth Middleware
@@ -450,7 +621,12 @@ async function startServer() {
 
   app.get("/api/designers", authenticateToken, async (req, res) => {
     try {
+      const cacheKey = "designers_all";
+      const cached = getCache(cacheKey);
+      if (cached) return res.json(cached);
+
       const designers = await db.prepare("SELECT id, name, username FROM designers").all();
+      setCache(cacheKey, designers);
       res.json(designers);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -510,10 +686,16 @@ async function startServer() {
   // Settings API
   app.get("/api/settings/public", async (req, res) => {
     try {
-      const keys = ['wedding_form_image_a', 'wedding_form_image_b', 'wedding_form_image_c'];
+      const cacheKey = "settings_public";
+      const cached = getCache(cacheKey);
+      if (cached) return res.json(cached);
+
+      const keys = ['wedding_form_image_a', 'wedding_form_image_b', 'wedding_form_image_c', 'wedding_form_image_e'];
       const placeholders = keys.map(() => '?').join(',');
-      const settings = await db.prepare(`SELECT key, value FROM settings WHERE key IN (${placeholders})`).all(keys) as any[];
+      const settings = await db.prepare(`SELECT key, value FROM settings WHERE key IN (${placeholders})`).all(...keys) as any[];
       const settingsMap = settings.reduce((acc, curr) => ({ ...acc, [curr.key]: curr.value }), {});
+      
+      setCache(cacheKey, settingsMap);
       res.json(settingsMap);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -522,8 +704,14 @@ async function startServer() {
 
   app.get("/api/settings", authenticateToken, async (req, res) => {
     try {
+      const cacheKey = "settings_all";
+      const cached = getCache(cacheKey);
+      if (cached) return res.json(cached);
+
       const settings = await db.prepare("SELECT key, value FROM settings").all() as any[];
       const settingsMap = settings.reduce((acc, curr) => ({ ...acc, [curr.key]: curr.value }), {});
+      
+      setCache(cacheKey, settingsMap);
       res.json(settingsMap);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -544,7 +732,8 @@ async function startServer() {
         quotation_terms,
         wedding_form_image_a,
         wedding_form_image_b,
-        wedding_form_image_c
+        wedding_form_image_c,
+        wedding_form_image_e
       } = req.body;
       
       const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
@@ -562,7 +751,8 @@ async function startServer() {
         if (wedding_form_image_a !== undefined) await stmt.run('wedding_form_image_a', wedding_form_image_a);
         if (wedding_form_image_b !== undefined) await stmt.run('wedding_form_image_b', wedding_form_image_b);
         if (wedding_form_image_c !== undefined) await stmt.run('wedding_form_image_c', wedding_form_image_c);
-      })();
+        if (wedding_form_image_e !== undefined) await stmt.run('wedding_form_image_e', wedding_form_image_e);
+      });
       
       res.json({ success: true });
     } catch (error: any) {
@@ -572,8 +762,13 @@ async function startServer() {
 
   app.get("/api/templates", async (req, res) => {
     try {
+      const cacheKey = "templates_all";
+      const cached = getCache(cacheKey);
+      if (cached) return res.json(cached);
+
       const stmt = db.prepare("SELECT * FROM templates ORDER BY created_at ASC");
       const templates = await stmt.all();
+      setCache(cacheKey, templates);
       res.json(templates);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -582,36 +777,50 @@ async function startServer() {
 
   app.post("/api/templates", authenticateToken, upload.single("file"), async (req, res) => {
     try {
-      const file = req.file;
-
-      if (!file) {
-        return res.status(400).json({ error: "Template file is required" });
-      }
-      const { name } = req.body;
+      const { name, nas_url, nas_smb } = req.body;
       if (!name) {
         return res.status(400).json({ error: "Template name is required" });
       }
 
       const id = Date.now().toString();
-      const filename = `template-${id}.pdf`;
-      const bucketName = process.env.R2_BUCKET!;
+      let filename = null;
 
-      try {
-        await s3.send(new PutObjectCommand({
-          Bucket: bucketName,
-          Key: filename,
-          Body: file.buffer,
-          ContentType: 'application/pdf',
-        }));
-      } catch (s3Error: any) {
-        console.error("S3 Upload Error:", s3Error);
-        return res.status(500).json({ error: "Error uploading file to storage" });
+      if (req.file) {
+        const file = req.file;
+        const bucketName = process.env.R2_BUCKET!;
+        // Make sure to use correct extension for image
+        const ext = file.originalname.split('.').pop()?.toLowerCase() || 'png';
+        filename = `template-${id}.${ext}`;
+        
+        if (isS3) {
+          try {
+            await s3.send(new PutObjectCommand({
+              Bucket: bucketName,
+              Key: filename,
+              Body: file.buffer,
+              ContentType: file.mimetype,
+            }));
+          } catch (s3Error: any) {
+            console.error("S3 Upload Error:", s3Error);
+            return res.status(500).json({ error: "Storage upload failed: " + s3Error.message });
+          }
+        } else {
+          try {
+            const templateDir = path.join(DATA_DIR, "templates");
+            if (!fs.existsSync(templateDir)) {
+              fs.mkdirSync(templateDir, { recursive: true });
+            }
+            fs.writeFileSync(path.join(templateDir, filename), file.buffer);
+          } catch (localError: any) {
+            console.error("Local Upload Error:", localError);
+          }
+        }
       }
 
-      const stmt = db.prepare("INSERT INTO templates (id, name, filename, filename_back) VALUES (?, ?, ?, ?)");
-      await stmt.run(id, name, filename, null);
+      const stmt = db.prepare("INSERT INTO templates (id, name, nas_url, nas_smb, filename) VALUES (?, ?, ?, ?, ?)");
+      await stmt.run(id, name, nas_url || null, nas_smb || null, filename);
 
-      res.json({ success: true, id, name, filename });
+      res.json({ success: true, id, name, nas_url, nas_smb, filename });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -620,23 +829,48 @@ async function startServer() {
   app.put("/api/templates/:id", authenticateToken, upload.single("file"), async (req, res) => {
     try {
       const { id } = req.params;
-      const { name } = req.body;
+      const { name, nas_url, nas_smb } = req.body;
       if (!name) return res.status(400).json({ error: "Template name is required" });
-
-      const file = req.file;
 
       const currentTemplate = await db.prepare("SELECT * FROM templates WHERE id = ?").get(id) as any;
       if (!currentTemplate) return res.status(404).json({ error: "Template not found" });
 
       let newFilename = currentTemplate.filename;
 
-      if (file) {
-        newFilename = file.filename;
+      if (req.file) {
+        const file = req.file;
+        const bucketName = process.env.R2_BUCKET!;
+        const ext = file.originalname.split('.').pop()?.toLowerCase() || 'png';
+        newFilename = `template-${Date.now()}.${ext}`;
+        
+        if (isS3) {
+          try {
+            await s3.send(new PutObjectCommand({
+              Bucket: bucketName,
+              Key: newFilename,
+              Body: file.buffer,
+              ContentType: file.mimetype,
+            }));
+          } catch (s3Error: any) {
+            console.error("S3 Upload Error:", s3Error);
+            return res.status(500).json({ error: "Storage upload failed: " + s3Error.message });
+          }
+        } else {
+          try {
+            const templateDir = path.join(DATA_DIR, "templates");
+            if (!fs.existsSync(templateDir)) {
+              fs.mkdirSync(templateDir, { recursive: true });
+            }
+            fs.writeFileSync(path.join(templateDir, newFilename), file.buffer);
+          } catch (localError: any) {
+            console.error("Local Upload Error:", localError);
+          }
+        }
       }
 
-      const stmt = db.prepare("UPDATE templates SET name = ?, filename = ?, filename_back = ? WHERE id = ?");
-      await stmt.run(name, newFilename, null, id);
-      res.json({ success: true, id, name, filename: newFilename });
+      const stmt = db.prepare("UPDATE templates SET name = ?, nas_url = ?, nas_smb = ?, filename = ? WHERE id = ?");
+      await stmt.run(name, nas_url || null, nas_smb || null, newFilename, id);
+      res.json({ success: true, id, name, nas_url, nas_smb, filename: newFilename });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -858,7 +1092,7 @@ async function startServer() {
         'wax_seal_style', 'wax_seal_color', 'envelope_color', 'envelope_foil_position',
         'envelope_logo', 'designer_id', 'status', 'tracking_number', 'payment_date',
         'amount', 'design_deadline', 'delivery_date', 'processing_options',
-        'bank_last_5', 'tax', 'invoice_number', 'tags', 'notes'
+        'bank_last_5', 'tax', 'invoice_number', 'tags', 'notes', 'shipped_date'
       ];
 
       const updateFields: string[] = [];
@@ -916,29 +1150,84 @@ async function startServer() {
       console.log(`Subject: ${subject}`);
       console.log(`Body: ${body}`);
 
+      // Try Resend API (HTTPS)
+      if (process.env.RESEND_API_KEY) {
+        console.log("[EMAIL] Sending via Resend API...");
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            from: process.env.SMTP_FROM || 'onboarding@resend.dev',
+            to: to,
+            subject: subject,
+            text: body
+          })
+        });
+        if (!response.ok) {
+          throw new Error(`Resend API Error: ${await response.text()}`);
+        }
+        return res.json({ success: true, api: 'resend' });
+      }
+
+      // Try SendGrid API (HTTPS)
+      if (process.env.SENDGRID_API_KEY) {
+        console.log("[EMAIL] Sending via SendGrid API...");
+        const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            personalizations: [{ to: [{ email: to }] }],
+            from: { email: process.env.SMTP_FROM || 'test@example.com' },
+            subject: subject,
+            content: [{ type: 'text/plain', value: body }]
+          })
+        });
+        if (!response.ok) {
+          throw new Error(`SendGrid API Error: ${await response.text()}`);
+        }
+        return res.json({ success: true, api: 'sendgrid' });
+      }
+
+      if (!process.env.SMTP_HOST) {
+        console.warn("[EMAIL] No SMTP_HOST configured. Simulation only.");
+        return res.json({ success: true, simulated: true });
+      }
+
       try {
+        const ipv4Host = await getIpv4Host(process.env.SMTP_HOST);
         const transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST,
+          host: ipv4Host,
           port: Number(process.env.SMTP_PORT),
-          secure: false, // true for 465, false for other ports
+          secure: Number(process.env.SMTP_PORT) === 465, // true for 465, false for other ports
+          tls: {
+            servername: process.env.SMTP_HOST // Required for SNI since we're connecting via IP
+          },
           auth: {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS,
-          }
+          },
+          connectionTimeout: 10000,
+          greetingTimeout: 10000,
+          socketTimeout: 10000,
         });
         await transporter.sendMail({
-          from: process.env.SMTP_FROM,
+          from: process.env.SMTP_FROM || process.env.SMTP_USER,
           to,
           subject,
           text: body
         });
         console.log("[EMAIL] Sent successfully via SMTP");
-      } catch (error) {
+        return res.json({ success: true });
+      } catch (error: any) {
         console.error("[EMAIL] Error sending email:", error);
-        return res.status(500).json({ error: "Failed to send email" });
+        return res.status(500).json({ error: error.message || "Failed to send email" });
       }
-
-      res.json({ success: true });
     } catch (error: any) {
       console.error("[EMAIL ERROR]", error);
       res.status(500).json({ error: error.message });
@@ -960,8 +1249,20 @@ async function startServer() {
   app.put("/api/orders/:id/dates", authenticateToken, async (req, res) => {
     try {
       const { id } = req.params;
-      const { design_deadline, delivery_date } = req.body;
-      await db.prepare("UPDATE weddings SET design_deadline = ?, delivery_date = ? WHERE id = ?").run(design_deadline, delivery_date, id);
+      const { design_deadline, delivery_date, shipped_date } = req.body;
+      
+      let query = "UPDATE weddings SET design_deadline = ?, delivery_date = ?";
+      const params: any[] = [design_deadline, delivery_date];
+      
+      if (shipped_date !== undefined) {
+        query += ", shipped_date = ?";
+        params.push(shipped_date);
+      }
+      
+      query += " WHERE id = ?";
+      params.push(id);
+      
+      await db.prepare(query).run(...params);
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1067,8 +1368,13 @@ async function startServer() {
   // --- Expenses Endpoints ---
   app.get("/api/expenses", authenticateToken, async (req, res) => {
     try {
-      const stmt = db.prepare("SELECT * FROM expenses ORDER BY expense_date DESC");
+      const cacheKey = "expenses_all";
+      const cached = getCache(cacheKey);
+      if (cached) return res.json(cached);
+
+      const stmt = db.prepare("SELECT * FROM expenses ORDER BY expense_date DESC LIMIT 100");
       const expenses = await stmt.all();
+      setCache(cacheKey, expenses);
       res.json(expenses);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1119,8 +1425,13 @@ async function startServer() {
   // --- Incomes Endpoints ---
   app.get("/api/incomes", authenticateToken, async (req, res) => {
     try {
-      const stmt = db.prepare("SELECT * FROM incomes ORDER BY income_date DESC");
+      const cacheKey = "incomes_all";
+      const cached = getCache(cacheKey);
+      if (cached) return res.json(cached);
+
+      const stmt = db.prepare("SELECT * FROM incomes ORDER BY income_date DESC LIMIT 100");
       const incomes = await stmt.all();
+      setCache(cacheKey, incomes);
       res.json(incomes);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1171,8 +1482,13 @@ async function startServer() {
   // --- Quotations API ---
   app.get("/api/quotations", authenticateToken, async (req, res) => {
     try {
-      const stmt = db.prepare("SELECT * FROM quotations ORDER BY created_at DESC");
+      const cacheKey = "quotations_all";
+      const cached = getCache(cacheKey);
+      if (cached) return res.json(cached);
+
+      const stmt = db.prepare("SELECT * FROM quotations ORDER BY created_at DESC LIMIT 100");
       const quotations = await stmt.all();
+      setCache(cacheKey, quotations);
       res.json(quotations);
     } catch (error) {
       console.error("Error fetching quotations:", error);
@@ -1291,18 +1607,77 @@ async function startServer() {
         return res.status(400).json({ error: "No email address found" });
       }
 
+      // Try Resend API (HTTPS)
+      if (process.env.RESEND_API_KEY) {
+        console.log("[EMAIL] Sending marketing via Resend API...");
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            from: process.env.SMTP_FROM || 'onboarding@resend.dev',
+            to: email,
+            subject: subject,
+            text: body
+          })
+        });
+        if (!response.ok) {
+          throw new Error(`Resend API Error: ${await response.text()}`);
+        }
+        await db.prepare("INSERT INTO marketing_email_logs (wedding_id) VALUES (?)").run(id);
+        return res.json({ success: true, api: 'resend' });
+      }
+
+      // Try SendGrid API (HTTPS)
+      if (process.env.SENDGRID_API_KEY) {
+        console.log("[EMAIL] Sending marketing via SendGrid API...");
+        const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.SENDGRID_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            personalizations: [{ to: [{ email: email }] }],
+            from: { email: process.env.SMTP_FROM || 'test@example.com' },
+            subject: subject,
+            content: [{ type: 'text/plain', value: body }]
+          })
+        });
+        if (!response.ok) {
+          throw new Error(`SendGrid API Error: ${await response.text()}`);
+        }
+        await db.prepare("INSERT INTO marketing_email_logs (wedding_id) VALUES (?)").run(id);
+        return res.json({ success: true, api: 'sendgrid' });
+      }
+
+      if (!process.env.SMTP_HOST) {
+        console.warn("[EMAIL] No SMTP_HOST configured. Simulation only.");
+        await db.prepare("INSERT INTO marketing_email_logs (wedding_id) VALUES (?)").run(id);
+        return res.json({ success: true, simulated: true });
+      }
+
+      const ipv4Host = await getIpv4Host(process.env.SMTP_HOST);
       const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
+        host: ipv4Host,
         port: Number(process.env.SMTP_PORT),
-        secure: false, // true for 465, false for other ports
+        secure: Number(process.env.SMTP_PORT) === 465, // true for 465, false for other ports
+        tls: {
+          servername: process.env.SMTP_HOST // Required for SNI since we're connecting via IP
+        },
         auth: {
           user: process.env.SMTP_USER,
           pass: process.env.SMTP_PASS,
         },
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
       });
 
       const mailOptions = {
-        from: process.env.SMTP_FROM,
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
         to: email,
         subject: subject,
         text: body,
@@ -1314,9 +1689,9 @@ async function startServer() {
       await db.prepare("INSERT INTO marketing_email_logs (wedding_id) VALUES (?)").run(id);
 
       res.json({ success: true });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error sending marketing email:", error);
-      res.status(500).json({ error: "Failed to send email" });
+      res.status(500).json({ error: error.message || "Failed to send email" });
     }
   });
 
@@ -1372,15 +1747,65 @@ async function startServer() {
 
   app.get("/api/weddings", authenticateToken, async (req, res) => {
     try {
+      const cacheKey = "weddings_all"; // We can keep a cached version of the summary
+      const cached = getCache(cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
+
+      const stmt = db.prepare(`
+        SELECT 
+          w.id, w.order_code, w.status, w.contact_source, w.social_id,
+          w.groom_name_zh, w.bride_name_zh, w.groom_name_en, w.bride_name_en,
+          w.wedding_date, w.payment_date, w.amount, w.design_deadline,
+          w.delivery_date, w.tracking_number, w.created_at,
+          w.receiver_name, w.receiver_phone, w.receiver_address,
+          w.designer_id, w.unsubscribed as marketing_email_optout, w.template_id,
+          w.bank_last_5, w.tax, w.invoice_number, w.order_type, w.notes,
+          t.name as template_name,
+          t.nas_url as template_nas_url,
+          t.nas_smb as template_nas_smb,
+          w.tags,
+          COALESCE(ml.marketing_count_30d, 0) as marketing_count_30d,
+          ml.last_marketing_sent_at
+        FROM weddings w 
+        LEFT JOIN templates t ON w.template_id = t.id
+        LEFT JOIN (
+          SELECT 
+            wedding_id,
+            SUM(CASE WHEN sent_at >= ? THEN 1 ELSE 0 END) as marketing_count_30d,
+            MAX(sent_at) as last_marketing_sent_at
+          FROM marketing_email_logs
+          GROUP BY wedding_id
+        ) ml ON w.id = ml.wedding_id
+        ORDER BY w.created_at DESC
+        LIMIT 100
+      `);
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const weddings = await stmt.all(thirtyDaysAgo);
+      
+      setCache(cacheKey, weddings);
+      res.json(weddings);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/weddings/:id", authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params;
       const stmt = db.prepare(`
         SELECT w.*, 
-               (SELECT COUNT(*) FROM marketing_email_logs m WHERE m.wedding_id = w.id AND m.sent_at >= datetime('now', '-30 days')) as marketing_count_30d,
-               (SELECT MAX(sent_at) FROM marketing_email_logs m WHERE m.wedding_id = w.id) as last_marketing_sent_at
+               t.name as template_name,
+               t.nas_url as template_nas_url,
+               t.nas_smb as template_nas_smb
         FROM weddings w 
-        ORDER BY w.created_at DESC
+        LEFT JOIN templates t ON w.template_id = t.id
+        WHERE w.id = ?
       `);
-      const weddings = await stmt.all();
-      res.json(weddings);
+      const wedding = await stmt.get(id);
+      if (!wedding) return res.status(404).json({ error: "Wedding not found" });
+      res.json(wedding);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1401,8 +1826,19 @@ async function startServer() {
     try {
       const { id } = req.params;
       const { status } = req.body;
-      await db.prepare("UPDATE weddings SET status = ? WHERE id = ?").run(status, id);
-      res.json({ success: true });
+      
+      if (status === '已出貨') {
+        const today = new Date().toISOString().split('T')[0];
+        const current = await db.prepare("SELECT shipped_date FROM weddings WHERE id = ?").get(id) as any;
+        if (current && !current.shipped_date) {
+            await db.prepare("UPDATE weddings SET status = ?, shipped_date = ? WHERE id = ?").run(status, today, id);
+        } else {
+            await db.prepare("UPDATE weddings SET status = ? WHERE id = ?").run(status, id);
+        }
+      } else {
+        await db.prepare("UPDATE weddings SET status = ? WHERE id = ?").run(status, id);
+      }
+      res.json({ success: true, shipped_date: status === '已出貨' ? new Date().toISOString().split('T')[0] : null });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1548,36 +1984,56 @@ async function startServer() {
     }
   });
 
-  // Serve templates via S3 proxy route
+  // Serve templates via S3 proxy route or fallback to local disk
   app.get("/templates/:filename", async (req, res) => {
     try {
       const filename = req.params.filename;
-      const bucketName = process.env.R2_BUCKET!;
       
-      const s3Response = await s3.send(new GetObjectCommand({
-        Bucket: bucketName,
-        Key: filename,
-      }));
-      
-      if (s3Response.ContentType) {
-        res.setHeader('Content-Type', s3Response.ContentType);
+      if (isS3) {
+        const bucketName = process.env.R2_BUCKET!;
+        const s3Response = await s3.send(new GetObjectCommand({
+          Bucket: bucketName,
+          Key: filename,
+        }));
+        
+        if (s3Response.ContentType) {
+          res.setHeader('Content-Type', s3Response.ContentType);
+        }
+        if (s3Response.ContentLength) {
+          res.setHeader('Content-Length', s3Response.ContentLength);
+        }
+        if (filename.endsWith('.svgz')) {
+          res.setHeader('Content-Encoding', 'gzip');
+          res.setHeader('Content-Type', 'image/svg+xml');
+        }
+        
+        const stream = s3Response.Body as NodeJS.ReadableStream;
+        stream.pipe(res);
+      } else {
+        const templatePath = path.join(DATA_DIR, "templates", filename);
+        if (fs.existsSync(templatePath)) {
+          if (filename.endsWith('.svgz')) {
+            res.setHeader('Content-Encoding', 'gzip');
+            res.setHeader('Content-Type', 'image/svg+xml');
+          } else if (filename.endsWith('.png')) {
+            res.setHeader('Content-Type', 'image/png');
+          } else if (filename.endsWith('.jpg') || filename.endsWith('.jpeg')) {
+            res.setHeader('Content-Type', 'image/jpeg');
+          } else if (filename.endsWith('.pdf')) {
+            res.setHeader('Content-Type', 'application/pdf');
+          }
+          const fileStream = fs.createReadStream(templatePath);
+          fileStream.pipe(res);
+        } else {
+          res.status(404).send('Not Found');
+        }
       }
-      if (s3Response.ContentLength) {
-        res.setHeader('Content-Length', s3Response.ContentLength);
-      }
-      if (filename.endsWith('.svgz')) {
-        res.setHeader('Content-Encoding', 'gzip');
-        res.setHeader('Content-Type', 'image/svg+xml');
-      }
-      
-      const stream = s3Response.Body as NodeJS.ReadableStream;
-      stream.pipe(res);
     } catch (error: any) {
-      if (error.name === 'NoSuchKey') {
+      if (error.name === 'NoSuchKey' || error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
         res.status(404).send('Not Found');
       } else {
-        console.error("S3 Get Error:", error);
-        res.status(500).send('Storage Error');
+        console.error("Storage Get Error:", error);
+        res.status(500).send(`Storage Error: ${error.message || String(error)}`);
       }
     }
   });

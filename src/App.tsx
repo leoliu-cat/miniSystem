@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Download, CheckCircle, FileText, LayoutTemplate, Send, Users, Upload, Plus, Trash2, Edit2, AlertCircle, X, LogOut, Search, Settings, Copy, Printer, ChevronDown, ChevronUp, Tag } from "lucide-react";
+import { Download, CheckCircle, FileText, LayoutTemplate, Send, Users, Upload, Plus, Trash2, Edit2, AlertCircle, X, LogOut, Search, Settings, Copy, Printer, ChevronDown, ChevronUp, Tag, ExternalLink } from "lucide-react";
 import { PrintWorkOrderModal } from './components/PrintWorkOrderModal';
 import { EditOrderModal } from './components/EditOrderModal';
 import FinancialReport from './components/FinancialReport';
@@ -20,6 +20,7 @@ const ShippingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: a
       .replace(/{{order_id}}/g, sub.id || '')
       .replace(/{{groom_name}}/g, sub.groom_name_zh || '')
       .replace(/{{bride_name}}/g, sub.bride_name_zh || '')
+      .replace(/{{receiver_name}}/g, sub.receiver_name || '')
       .replace(/{{tracking_number}}/g, sub.tracking_number || '尚未填寫');
   };
 
@@ -41,7 +42,7 @@ const ShippingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: a
   useEffect(() => {
     setSubject(parseTemplate(settings.email_subject || "您的喜帖快遞已寄出 - 訂單 #{{order_id}}"));
     setBody(parseTemplate(settings.email_body || "親愛的 {{groom_name}} & {{bride_name}} 您好，\n\n您的喜帖已經寄出囉！\n快遞單號為：{{tracking_number}}\n\n如有任何問題，歡迎隨時與我們聯繫。\n\n祝您 順心\nMini Style Cards"));
-  }, [sub.tracking_number, sub.groom_name_zh, sub.bride_name_zh, settings]);
+  }, [sub.tracking_number, sub.groom_name_zh, sub.bride_name_zh, sub.receiver_name, settings]);
 
   const handleSaveTemplate = async () => {
     setIsSavingTemplate(true);
@@ -95,10 +96,11 @@ const ShippingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: a
         setSendSuccess(true);
         setTimeout(() => setSendSuccess(false), 3000);
       } else {
-        alert("發送失敗");
+        const err = await res.json().catch(() => ({}));
+        alert(`發送失敗: ${err.error || '網路異常或伺服器錯誤'}`);
       }
-    } catch (error) {
-      alert("發送失敗");
+    } catch (error: any) {
+      alert(`發送失敗: ${error.message || '無法連線到伺服器'}`);
     } finally {
       setIsSending(false);
     }
@@ -133,6 +135,7 @@ const ShippingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: a
               <p className="text-xs text-stone-500">
                 您可以使用以下變數，系統發送時會自動替換為訂單資訊：<br/>
                 <code className="bg-stone-200 px-1 rounded">{"{{order_id}}"}</code> 訂單編號, 
+                <code className="bg-stone-200 px-1 rounded ml-1">{"{{receiver_name}}"}</code> 收件人姓名, 
                 <code className="bg-stone-200 px-1 rounded ml-1">{"{{groom_name}}"}</code> 新郎姓名, 
                 <code className="bg-stone-200 px-1 rounded ml-1">{"{{bride_name}}"}</code> 新娘姓名, 
                 <code className="bg-stone-200 px-1 rounded ml-1">{"{{tracking_number}}"}</code> 快遞單號
@@ -266,6 +269,7 @@ export type WeddingData = {
   amount?: number;
   design_deadline?: string;
   delivery_date?: string;
+  shipped_date?: string;
   tracking_number?: string;
   processing_options?: string;
   bank_last_5?: string;
@@ -273,6 +277,9 @@ export type WeddingData = {
   invoice_number?: string;
   tags?: string;
   unsubscribed?: number;
+  template_name?: string;
+  template_nas_url?: string;
+  template_nas_smb?: string;
   marketing_count_30d?: number;
   last_marketing_sent_at?: string;
   notes?: string;
@@ -281,8 +288,10 @@ export type WeddingData = {
 type TemplateData = {
   id: string;
   name: string;
-  filename: string;
+  filename?: string;
   filename_back?: string;
+  nas_url?: string;
+  nas_smb?: string;
 };
 
 export const processingOptionsSchema: Record<string, {display: string, value: string}[]> = {
@@ -513,6 +522,7 @@ const MarketingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: 
       .replace(/{{order_id}}/g, sub.id || '')
       .replace(/{{groom_name}}/g, sub.groom_name_zh || '')
       .replace(/{{bride_name}}/g, sub.bride_name_zh || '')
+      .replace(/{{receiver_name}}/g, sub.receiver_name || '')
       .replace(/{{unsubscribe_link}}/g, unsubscribeLink);
   };
 
@@ -533,7 +543,7 @@ const MarketingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: 
   useEffect(() => {
     setSubject(parseTemplate(settings.marketing_email_subject || "專屬優惠通知"));
     setBody(parseTemplate(settings.marketing_email_body || "親愛的 {{groom_name}} & {{bride_name}} 您好，\n\n感謝您選擇 Mini Style Cards！\n\n我們為您準備了專屬優惠，歡迎回購！\n\n祝您 順心\nMini Style Cards\n\n若您不想再收到此類通知，請點擊以下連結退訂：\n{{unsubscribe_link}}"));
-  }, [sub.groom_name_zh, sub.bride_name_zh, settings]);
+  }, [sub.groom_name_zh, sub.bride_name_zh, sub.receiver_name, settings]);
 
   const handleSaveTemplate = async () => {
     setIsSavingTemplate(true);
@@ -591,11 +601,11 @@ const MarketingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: 
         setSendSuccess(true);
         setTimeout(() => setSendSuccess(false), 3000);
       } else {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         alert(data.error || "發送失敗");
       }
-    } catch (error) {
-      alert("發送失敗");
+    } catch (error: any) {
+      alert(`發送失敗: ${error.message || '無法連線到伺服器'}`);
     } finally {
       setIsSending(false);
     }
@@ -633,7 +643,7 @@ const MarketingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: 
 
           {isEditingTemplate ? (
             <div className="space-y-2 bg-white p-3 rounded border border-rose-100">
-              <p className="text-xs text-rose-600 mb-2">修改預設文字 (支援變數: {"{{order_id}}, {{groom_name}}, {{bride_name}}, {{unsubscribe_link}}"})</p>
+              <p className="text-xs text-rose-600 mb-2">修改預設文字 (支援變數: {"{{order_id}}, {{receiver_name}}, {{groom_name}}, {{bride_name}}, {{unsubscribe_link}}"})</p>
               <input 
                 type="text" 
                 value={templateSubject}
@@ -718,7 +728,7 @@ export default function App() {
   }, []);
 
   const [filterDesignerId, setFilterDesignerId] = useState<number | "all">("all");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<string>("新進訂單");
   const [dashboardMonth, setDashboardMonth] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showAddDesigner, setShowAddDesigner] = useState(false);
@@ -786,7 +796,9 @@ export default function App() {
   
   // Template upload state
   const [uploadName, setUploadName] = useState("");
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadNasUrl, setUploadNasUrl] = useState("");
+  const [uploadNasSmb, setUploadNasSmb] = useState("");
+  const [uploadImage, setUploadImage] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<TemplateData | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
@@ -1061,16 +1073,59 @@ export default function App() {
   };
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (token && view === "dashboard") {
-      interval = setInterval(() => {
-        loadDashboard(token);
-      }, 60000); // Changed from 15000 to 60000 (1 minute)
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
+    // Auto-refresh is disabled to save database quota
   }, [token, view]);
+
+  const handleViewDetails = async (sub: WeddingData, isExpanded: boolean) => {
+    if (isExpanded) {
+      setExpandedOrderId(null);
+      return;
+    }
+    if (sub.wax_seal_style === undefined) {
+      try {
+        const res = await fetch(`/api/weddings/${sub.id}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) {
+          const fullData = await res.json();
+          setSubmissions(prev => prev.map(s => s.id === sub.id ? fullData : s));
+        }
+      } catch (e) {
+        console.error("Failed to load details", e);
+      }
+    }
+    setExpandedOrderId(sub.id!);
+  };
+
+  const handleEditClick = async (sub: WeddingData) => {
+    let orderData = sub;
+    if (sub.wax_seal_style === undefined) {
+      try {
+        const res = await fetch(`/api/weddings/${sub.id}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) {
+          orderData = await res.json();
+          setSubmissions(prev => prev.map(s => s.id === sub.id ? orderData : s));
+        }
+      } catch (e) {
+        console.error("Failed to load details for editing", e);
+      }
+    }
+    setEditingOrder(orderData);
+  };
+
+  const handlePrintClick = async (sub: WeddingData) => {
+    let orderData = sub;
+    if (sub.wax_seal_style === undefined) {
+      try {
+        const res = await fetch(`/api/weddings/${sub.id}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) {
+          orderData = await res.json();
+          setSubmissions(prev => prev.map(s => s.id === sub.id ? orderData : s));
+        }
+      } catch (e) {
+        console.error("Failed to load details for printing", e);
+      }
+    }
+    setPrintingOrder(orderData);
+  };
 
   const handleAssignDesigner = async (orderId: number, designerId: number | "") => {
     try {
@@ -1138,7 +1193,8 @@ export default function App() {
         body: JSON.stringify({ status }),
       });
       if (res.ok) {
-        setSubmissions(prev => prev.map(sub => sub.id === orderId ? { ...sub, status } : sub));
+        const data = await res.json();
+        setSubmissions(prev => prev.map(sub => sub.id === orderId ? { ...sub, status, ...(data.shipped_date !== undefined ? { shipped_date: data.shipped_date } : {}) } : sub));
       }
     } catch (error) {
       console.error("Error changing status:", error);
@@ -1212,7 +1268,7 @@ export default function App() {
     }
   };
 
-  const handleUpdateDates = async (id: number, designDeadline: string, deliveryDate: string) => {
+  const handleUpdateDates = async (id: number, designDeadline: string, deliveryDate: string, shippedDate?: string) => {
     try {
       const res = await fetch(`/api/orders/${id}/dates`, {
         method: "PUT",
@@ -1220,7 +1276,11 @@ export default function App() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ design_deadline: designDeadline, delivery_date: deliveryDate })
+        body: JSON.stringify({ 
+          design_deadline: designDeadline, 
+          delivery_date: deliveryDate,
+          ...(shippedDate !== undefined ? { shipped_date: shippedDate } : {})
+        })
       });
       if (res.ok) loadDashboard();
     } catch (error) {
@@ -1331,29 +1391,34 @@ export default function App() {
   const handleEditTemplateClick = (template: TemplateData) => {
     setEditingTemplate(template);
     setUploadName(template.name);
-    setUploadFile(null);
+    setUploadNasUrl(template.nas_url || "");
+    setUploadNasSmb(template.nas_smb || "");
+    setUploadImage(null);
   };
 
   const cancelEditTemplate = () => {
     setEditingTemplate(null);
     setUploadName("");
-    setUploadFile(null);
+    setUploadNasUrl("");
+    setUploadNasSmb("");
+    setUploadImage(null);
   };
 
   const handleTemplateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!uploadName) return;
-    if (!editingTemplate && !uploadFile) return;
 
-    if (uploadFile && uploadFile.size > 100 * 1024 * 1024) {
-      showAlert("錯誤", "檔案大小不能超過 100MB，請壓縮 PDF 檔案後再試。");
+    if (uploadImage && uploadImage.size > 10 * 1024 * 1024) {
+      showAlert("錯誤", "圖片大小不能超過 10MB。");
       return;
     }
 
     setIsUploading(true);
     const formData = new FormData();
     formData.append("name", uploadName);
-    if (uploadFile) formData.append("file", uploadFile);
+    formData.append("nas_url", uploadNasUrl);
+    formData.append("nas_smb", uploadNasSmb);
+    if (uploadImage) formData.append("file", uploadImage);
 
     try {
       const url = editingTemplate ? `/api/templates/${editingTemplate.id}` : "/api/templates";
@@ -1361,25 +1426,20 @@ export default function App() {
       
       const res = await fetch(url, {
         method,
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { 
+          'Authorization': `Bearer ${token}`
+        },
         body: formData,
       });
       
       if (!res.ok) {
-        if (res.status === 413) {
-          throw new Error("檔案太大，請上傳小於 100MB 的檔案。");
-        }
+        throw new Error("伺服器發生錯誤，請稍後再試。");
       }
       
-      let data;
-      try {
-        data = await res.json();
-      } catch (e) {
-        throw new Error(res.status === 413 ? "檔案太大，請上傳小於 100MB 的檔案。" : "伺服器發生錯誤，請稍後再試。");
-      }
+      const data = await res.json();
 
       if (data.success) {
-        showAlert("成功", editingTemplate ? "樣板更新成功！" : "樣板上傳成功！");
+        showAlert("成功", editingTemplate ? "樣板更新成功！" : "新增樣板成功！");
         cancelEditTemplate();
         fetchTemplates(); // Refresh template list
       } else {
@@ -1670,7 +1730,7 @@ export default function App() {
                           </label>
                         )}
                       </div>
-                      <img src={publicSettings.wedding_form_image_a || "https://images.unsplash.com/photo-1583337130417-3346a1be7dee?auto=format&fit=crop&w=800&q=80"} alt="Wax Seal Options" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
+                      <img src={publicSettings.wedding_form_image_a || "https://images.unsplash.com/photo-1583337130417-3346a1be7dee?auto=format&fit=crop&w=800&q=80"} alt="Wax Seal Options" className="w-full h-auto rounded-lg mb-4" />
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-medium text-stone-500 mb-1">樣式</label>
@@ -1747,7 +1807,7 @@ export default function App() {
                           </label>
                         )}
                       </div>
-                      <img src={publicSettings.wedding_form_image_b || "https://images.unsplash.com/photo-1507608616759-54f48f0af0ee?auto=format&fit=crop&w=800&q=80"} alt="Envelope Colors" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
+                      <img src={publicSettings.wedding_form_image_b || "https://images.unsplash.com/photo-1507608616759-54f48f0af0ee?auto=format&fit=crop&w=800&q=80"} alt="Envelope Colors" className="w-full h-auto rounded-lg mb-4" />
                       <input type="text" name="envelope_color" value={formData.envelope_color} onChange={handleInputChange} className="w-full px-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-all" placeholder="例：酒紅色" />
                     </div>
 
@@ -1788,7 +1848,7 @@ export default function App() {
                           </label>
                         )}
                       </div>
-                      <img src={publicSettings.wedding_form_image_c || "https://images.unsplash.com/photo-1464802686167-b939a6910659?auto=format&fit=crop&w=800&q=80"} alt="Foil Positions" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
+                      <img src={publicSettings.wedding_form_image_c || "https://images.unsplash.com/photo-1464802686167-b939a6910659?auto=format&fit=crop&w=800&q=80"} alt="Foil Positions" className="w-full h-auto rounded-lg mb-4" />
                       <div className="space-y-2">
                         {[
                           "不需要燙金，信封正反面皆為『空白』無燙金資訊。",
@@ -1818,9 +1878,43 @@ export default function App() {
                     </div>
 
                     <div className="bg-stone-50 p-4 rounded-xl border border-stone-200">
-                      <h3 className="text-sm font-medium text-stone-800 mb-1">e. 信封燙印Logo</h3>
-                      <p className="text-xs text-stone-500 mb-3">請輸入代號 (A-O)</p>
-                      <img src="https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=800&q=80" alt="Envelope Logos" className="w-full h-auto rounded-lg mb-4 object-cover max-h-[300px]" />
+                      <div className="flex items-start justify-between mb-1">
+                        <div>
+                          <h3 className="text-sm font-medium text-stone-800">e. 信封燙印Logo</h3>
+                          <p className="text-xs text-stone-500 mb-3">請輸入代號 (A-O)</p>
+                        </div>
+                        {currentUser && (
+                          <label className="cursor-pointer bg-white border border-stone-200 shadow-sm text-stone-600 px-2 py-1 rounded text-xs hover:bg-stone-50 flex items-center gap-1 transition-colors mt-0.5 shrink-0 ml-2">
+                            <Upload className="w-3 h-3" />
+                            更換圖片
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              className="hidden" 
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                const reader = new FileReader();
+                                reader.onloadend = async () => {
+                                  try {
+                                    const res = await fetch('/api/settings', {
+                                      method: 'PUT',
+                                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                                      body: JSON.stringify({ wedding_form_image_e: reader.result })
+                                    });
+                                    if (res.ok) {
+                                      setPublicSettings(prev => ({ ...prev, wedding_form_image_e: reader.result as string }));
+                                      alert('圖片更新成功');
+                                    } else alert('圖片更新失敗');
+                                  } catch(e) { alert('發生錯誤'); }
+                                };
+                                reader.readAsDataURL(file);
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                      <img src={publicSettings.wedding_form_image_e || "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=800&q=80"} alt="Envelope Logos" className="w-full h-auto rounded-lg mb-4" />
                       <input type="text" name="envelope_logo" value={formData.envelope_logo} onChange={handleInputChange} className="w-full px-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-all" placeholder="例：A" />
                     </div>
                   </div>
@@ -2073,11 +2167,11 @@ export default function App() {
                             ) : (
                               ["台北", "新北", "桃園", "台中", "台南", "高雄", "新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "台東"].map(city => {
                                 const count = statsSubmissions.filter(s => 
-                                  s.venue_address?.includes(city) || 
-                                  (city === "台北" && s.venue_address?.includes("臺北")) ||
-                                  (city === "台中" && s.venue_address?.includes("臺中")) ||
-                                  (city === "台南" && s.venue_address?.includes("臺南")) ||
-                                  (city === "台東" && s.venue_address?.includes("臺東"))
+                                  s.receiver_address?.includes(city) || 
+                                  (city === "台北" && s.receiver_address?.includes("臺北")) ||
+                                  (city === "台中" && s.receiver_address?.includes("臺中")) ||
+                                  (city === "台南" && s.receiver_address?.includes("臺南")) ||
+                                  (city === "台東" && s.receiver_address?.includes("臺東"))
                                 ).length;
                                 if (count === 0) return null;
                                 return (
@@ -2093,7 +2187,7 @@ export default function App() {
                                 );
                               })
                             )}
-                            {statsSubmissions.length > 0 && !["台北", "新北", "桃園", "台中", "台南", "高雄", "新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "台東"].some(city => statsSubmissions.filter(s => s.venue_address?.includes(city) || (city === "台北" && s.venue_address?.includes("臺北")) || (city === "台中" && s.venue_address?.includes("臺中")) || (city === "台南" && s.venue_address?.includes("臺南")) || (city === "台東" && s.venue_address?.includes("臺東"))).length > 0) && (
+                            {statsSubmissions.length > 0 && !["台北", "新北", "桃園", "台中", "台南", "高雄", "新竹", "苗栗", "彰化", "南投", "雲林", "嘉義", "屏東", "宜蘭", "花蓮", "台東"].some(city => statsSubmissions.filter(s => s.receiver_address?.includes(city) || (city === "台北" && s.receiver_address?.includes("臺北")) || (city === "台中" && s.receiver_address?.includes("臺中")) || (city === "台南" && s.receiver_address?.includes("臺南")) || (city === "台東" && s.receiver_address?.includes("臺東"))).length > 0) && (
                               <div className="text-sm text-stone-400 text-center py-4">無符合的地區資料</div>
                             )}
                           </div>
@@ -2213,7 +2307,7 @@ export default function App() {
                         {submissions
                           .filter(sub => filterDesignerId === "all" || sub.designer_id === filterDesignerId)
                           .filter(sub => {
-                            if (filterStatus === "all") return true;
+                            if (filterStatus === "all") return sub.status !== "已出貨" && sub.status !== "已結案";
                             if (filterStatus === "等待填寫資料") return !sub.status || sub.status === "等待填寫資料";
                             return sub.status === filterStatus;
                           })
@@ -2242,7 +2336,7 @@ export default function App() {
                           submissions
                             .filter(sub => filterDesignerId === "all" || sub.designer_id === filterDesignerId)
                             .filter(sub => {
-                              if (filterStatus === "all") return true;
+                              if (filterStatus === "all") return sub.status !== "已出貨" && sub.status !== "已結案";
                               if (filterStatus === "等待填寫資料") return !sub.status || sub.status === "等待填寫資料";
                               return sub.status === filterStatus;
                             })
@@ -2291,6 +2385,9 @@ export default function App() {
                                       )}
                                       交件: {sub.delivery_date || "-"}
                                     </div>
+                                    {sub.shipped_date && (
+                                       <div className="text-green-600 font-medium mt-1 border border-green-200 bg-green-50 px-1.5 py-0.5 rounded inline-block text-xs">出貨: {sub.shipped_date}</div>
+                                    )}
                                   </td>
                                   <td className="py-4 px-6">
                                     <select
@@ -2344,13 +2441,13 @@ export default function App() {
                                           複製連結
                                         </button>
                                         <button
-                                          onClick={() => setExpandedOrderId(isExpanded ? null : sub.id!)}
+                                          onClick={() => handleViewDetails(sub, isExpanded)}
                                           className="inline-flex items-center justify-center gap-1 bg-stone-100 hover:bg-stone-200 text-stone-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
                                         >
                                           {isExpanded ? "隱藏詳情" : "查看詳情"}
                                         </button>
                                         <button
-                                          onClick={() => setEditingOrder(sub)}
+                                          onClick={() => handleEditClick(sub)}
                                           className="inline-flex items-center justify-center gap-1 bg-stone-100 hover:bg-stone-200 text-stone-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border border-stone-200"
                                         >
                                           <Edit2 className="w-4 h-4" />
@@ -2364,16 +2461,31 @@ export default function App() {
                                           <FileText className="w-4 h-4" />
                                           下載 TXT
                                         </a>
-                                        <a 
-                                          href={`/api/weddings/${sub.id}/download?token=${token}`}
-                                          target="_blank"
-                                          className="inline-flex items-center justify-center gap-1 bg-stone-900 hover:bg-stone-800 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-                                        >
-                                          <Download className="w-4 h-4" />
-                                          下載底圖 (PDF)
-                                        </a>
+                                        {sub.template_nas_url && (
+                                          <a 
+                                            href={sub.template_nas_url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center justify-center gap-1 bg-stone-900 hover:bg-stone-800 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                                          >
+                                            <ExternalLink className="w-4 h-4" />
+                                            開啟 NAS 資料夾
+                                          </a>
+                                        )}
+                                        {sub.template_nas_smb && (
+                                          <button
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(sub.template_nas_smb || '');
+                                              showAlert("已複製", "NAS 內部路徑已複製到剪貼簿。");
+                                            }}
+                                            className="inline-flex items-center justify-center gap-1 bg-stone-100 hover:bg-stone-200 text-stone-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                                          >
+                                            <Copy className="w-4 h-4" />
+                                            複製 SMB 路徑
+                                          </button>
+                                        )}
                                         <button
-                                          onClick={() => setPrintingOrder(sub)}
+                                          onClick={() => handlePrintClick(sub)}
                                           className="inline-flex items-center justify-center gap-1 bg-stone-100 hover:bg-stone-200 text-stone-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors border border-stone-200"
                                         >
                                           <Printer className="w-4 h-4" />
@@ -2580,7 +2692,7 @@ export default function App() {
                                                 value={sub.design_deadline || ""}
                                                 onChange={(e) => {
                                                   setSubmissions(prev => prev.map(s => s.id === sub.id ? { ...s, design_deadline: e.target.value } : s));
-                                                  sub.id && handleUpdateDates(sub.id, e.target.value, sub.delivery_date || "");
+                                                  sub.id && handleUpdateDates(sub.id, e.target.value, sub.delivery_date || "", sub.shipped_date);
                                                 }}
                                               />
                                             </div>
@@ -2592,7 +2704,19 @@ export default function App() {
                                                 value={sub.delivery_date || ""}
                                                 onChange={(e) => {
                                                   setSubmissions(prev => prev.map(s => s.id === sub.id ? { ...s, delivery_date: e.target.value } : s));
-                                                  sub.id && handleUpdateDates(sub.id, sub.design_deadline || "", e.target.value);
+                                                  sub.id && handleUpdateDates(sub.id, sub.design_deadline || "", e.target.value, sub.shipped_date);
+                                                }}
+                                              />
+                                            </div>
+                                            <div className="bg-white p-3 rounded-lg border border-stone-200 shadow-sm md:col-span-2 lg:col-span-4">
+                                              <label className="block text-xs font-medium text-stone-500 mb-1">實際出貨日</label>
+                                              <input 
+                                                type="date" 
+                                                className="w-full text-sm border-stone-300 rounded-md focus:ring-rose-500 focus:border-rose-500 outline-none px-2 py-1.5"
+                                                value={sub.shipped_date || ""}
+                                                onChange={(e) => {
+                                                  setSubmissions(prev => prev.map(s => s.id === sub.id ? { ...s, shipped_date: e.target.value } : s));
+                                                  sub.id && handleUpdateDates(sub.id, sub.design_deadline || "", sub.delivery_date || "", e.target.value);
                                                 }}
                                               />
                                             </div>
@@ -2934,17 +3058,43 @@ export default function App() {
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-stone-700 mb-1">
-                          PDF 樣板檔案 {editingTemplate && <span className="text-stone-400 font-normal">(若不更改可留空)</span>}
+                          縮圖上傳 (選填) {editingTemplate && <span className="text-stone-400 font-normal">(若不更改可留空)</span>}
                         </label>
                         <input 
-                          required={!editingTemplate}
                           type="file" 
-                          accept=".pdf"
-                          onChange={(e) => setUploadFile(e.target.files?.[0] || null)} 
+                          accept="image/*"
+                          onChange={(e) => setUploadImage(e.target.files?.[0] || null)} 
                           className="w-full text-sm text-stone-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-medium file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100 transition-all" 
                         />
                         <p className="text-xs text-stone-500 mt-2">
-                          請上傳包含正反面畫布的單一 PDF 檔案（尺寸、出血皆已設定好）。系統會自動在最後方新增一頁純文字資料頁。
+                          請上傳樣板縮圖，供客戶選擇時參考。若不上傳，將保持空白。
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">
+                          NAS 網址 (Web) 
+                        </label>
+                        <input 
+                          type="text" 
+                          value={uploadNasUrl}
+                          onChange={(e) => setUploadNasUrl(e.target.value)} 
+                          className="w-full px-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-all"
+                          placeholder="例：https://nas.example.com/share/..." 
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">
+                          內部 SMB 路徑
+                        </label>
+                        <input 
+                          type="text" 
+                          value={uploadNasSmb}
+                          onChange={(e) => setUploadNasSmb(e.target.value)} 
+                          className="w-full px-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none transition-all"
+                          placeholder="例：smb://nas.local/design/..." 
+                        />
+                        <p className="text-xs text-stone-500 mt-2">
+                          系統已更新，不再上傳 PDF 檔案，改為記錄 NAS 路徑方便設計師一鍵開啟。
                         </p>
                       </div>
                       <div className="flex gap-2">
@@ -2986,63 +3136,60 @@ export default function App() {
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
-                          <div className="w-full aspect-[2/3] bg-stone-100 border border-stone-200 rounded-md flex items-center justify-center shadow-sm relative overflow-hidden">
-                            {template.filename.endsWith('.pdf') ? (
-                              <div className="w-full h-full overflow-hidden flex items-center justify-center">
-                                <Document
-                                  file={`/templates/${template.filename}`}
-                                  loading={<div className="text-xs text-stone-400">載入中...</div>}
-                                  error={<div className="text-xs text-rose-400">無法載入</div>}
-                                >
-                                  <Page 
-                                    pageNumber={1} 
-                                    width={150} 
-                                    renderTextLayer={false} 
-                                    renderAnnotationLayer={false} 
-                                  />
-                                </Document>
-                              </div>
-                            ) : (
+                          <div className="w-full aspect-[2/3] bg-stone-100 border border-stone-200 rounded-md flex flex-col items-center justify-center shadow-sm relative overflow-hidden p-4 text-center group-hover:border-stone-300 transition-colors">
+                            {template.filename ? (
                               <>
-                                <img 
-                                  src={`/templates/${template.filename}`} 
-                                  alt={template.name} 
-                                  className="w-full h-full object-cover" 
+                                <img
+                                  src={template.filename.startsWith('http') ? template.filename : `/templates/${template.filename}`}
+                                  alt={template.name}
+                                  className="absolute inset-0 w-full h-full object-cover z-0"
                                   onError={(e) => {
                                     const target = e.target as HTMLImageElement;
                                     target.style.display = 'none';
-                                    if (target.nextElementSibling) {
-                                      target.nextElementSibling.classList.remove('hidden');
-                                    }
-                                  }} 
+                                  }}
                                 />
-                                <LayoutTemplate className="w-8 h-8 text-stone-400 hidden" />
                               </>
+                            ) : (
+                               <LayoutTemplate className="w-8 h-8 text-stone-300 mb-2 z-10" />
                             )}
+                            <div className="z-10 flex flex-col gap-1 w-full bg-white/90 backdrop-blur-sm p-2 rounded-lg shadow-sm border border-stone-200/50 mt-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                              {template.nas_url && (
+                                <span className="text-xs text-blue-600 truncate w-full flex items-center justify-center gap-1 font-medium">
+                                  <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                                  <span className="truncate">Web 連結</span>
+                                </span>
+                              )}
+                              {template.nas_smb && (
+                                <span className="text-xs text-stone-500 truncate w-full flex items-center justify-center gap-1">
+                                  <LayoutTemplate className="w-3 h-3 flex-shrink-0" />
+                                  <span className="truncate">SMB 路徑</span>
+                                </span>
+                              )}
+                              {!template.nas_url && !template.nas_smb && (
+                                <span className="text-xs text-stone-400">尚未設定路徑</span>
+                              )}
+                            </div>
                           </div>
                           <div className="text-center w-full">
                             <div className="font-medium text-stone-800 text-sm truncate px-2">{template.name}</div>
-                            <div className="text-xs text-stone-500 mt-1 truncate px-2" title={template.filename}>
-                              {template.filename}
-                            </div>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
                   
-                  <div className="mt-8 bg-amber-50 border border-amber-200 rounded-xl p-6 text-amber-900">
-                    <h3 className="font-medium mb-3 flex items-center gap-2 text-amber-800">
+                  <div className="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-6 text-blue-900">
+                    <h3 className="font-medium mb-3 flex items-center gap-2 text-blue-800">
                       <AlertCircle className="w-5 h-5" />
-                      PDF 模式說明
+                      NAS 連結模式說明
                     </h3>
-                    <div className="space-y-4 text-sm text-amber-800/90">
-                      <p>系統已全面升級為「單一 PDF 模式」，以解決 SVG 替換文字時對位不準確的問題，提供更穩定、精準的印刷工作流：</p>
+                    <div className="space-y-4 text-sm text-blue-800/90">
+                      <p>系統不再將幾十MB甚至上百MB的 PDF 檔案上傳至伺服器，改為直接記錄您 NAS 中的路徑。這樣不僅加快儲存速度，也能確保設計師每次取得的都是最新的檔案：</p>
                       <ul className="list-disc list-inside space-y-2 ml-2">
-                        <li><strong>上傳底圖：</strong> 您只需上傳設計好的 PDF 底圖（包含正確的尺寸與出血設定，若有正反面請放在同一個 PDF 檔案的兩個畫布中）。</li>
-                        <li><strong>不需設定變數：</strong> 底圖上不需要放置任何 <code>{`{{變數}}`}</code>，您可以留白，或是放上轉外框的假字作為排版參考。</li>
-                        <li><strong>完全保留編輯功能：</strong> 系統不會修改您上傳的 PDF，確保您下載時能 100% 保留 Illustrator 的編輯屬性（不會有文字被強制轉外框的問題）。</li>
-                        <li><strong>設計師作業：</strong> 點擊「下載底圖 (PDF)」與「下載 TXT」。在 Illustrator 中開啟 PDF 底圖，並從 TXT 檔中複製客戶資料貼上排版。排版完成後即可直接送印。</li>
+                        <li><strong>填寫內部路徑：</strong> 您可以直接輸入 <code>smb://</code> 開頭的路徑。當設計師需要製作排版時，可以直接複製該路徑在自己的電腦開啟。</li>
+                        <li><strong>填寫 Web 連結：</strong> 您也可以建立一個可透過瀏覽器打開的 NAS 分享連結（或 Google Drive 連結），讓設計師點擊按鈕一鍵跳轉到該資料夾。</li>
+                        <li><strong>樣板縮圖：</strong> 可單獨上傳樣板的圖片縮圖 (.jpg, .png)，做為客戶填單時的款式預覽。</li>
+                        <li><strong>排版作業方式：</strong> 設計師可以在訂單頁面下載客戶填寫的 <code>TXT</code> 文字檔，並複製對應樣板的 <code>SMB</code> 路徑後，將文字複製進 AI/PDF 檔案內完成排版。</li>
                       </ul>
                     </div>
                   </div>
@@ -3181,7 +3328,7 @@ export default function App() {
                         className={`flex-none w-32 cursor-pointer rounded-xl border-2 transition-all snap-start overflow-hidden ${newOrderData.template_id === t.id ? 'border-rose-500 shadow-md' : 'border-stone-200 hover:border-stone-300'}`}
                       >
                         <div className="w-full aspect-[2/3] bg-stone-100 relative pointer-events-none flex items-center justify-center overflow-hidden">
-                          {t.filename.endsWith('.pdf') ? (
+                          {t.filename?.endsWith('.pdf') ? (
                             <Document
                               file={`/templates/${t.filename}`}
                               loading={<div className="text-xs text-stone-400">載入中...</div>}
@@ -3194,9 +3341,9 @@ export default function App() {
                                 renderAnnotationLayer={false} 
                               />
                             </Document>
-                          ) : (
+                          ) : t.filename ? (
                             <img 
-                              src={`/templates/${t.filename}`} 
+                              src={t.filename.startsWith('http') ? t.filename : `/templates/${t.filename}`} 
                               alt={t.name} 
                               className="w-full h-full object-cover"
                               onError={(e) => {
@@ -3204,6 +3351,11 @@ export default function App() {
                                 target.style.display = 'none';
                               }}
                             />
+                          ) : (
+                            <div className="text-stone-300 text-xs text-center p-2 flex flex-col items-center">
+                              <LayoutTemplate className="w-8 h-8 mb-1 text-stone-300" />
+                              <span className="text-stone-400">無縮圖</span>
+                            </div>
                           )}
                         </div>
                         <div className={`p-2 text-center text-xs font-medium truncate ${newOrderData.template_id === t.id ? 'bg-rose-50 text-rose-700' : 'bg-white text-stone-600'}`}>
