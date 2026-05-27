@@ -171,6 +171,78 @@ export default function FinancialReport({ token, designers, showAlert }: Financi
     }
   };
 
+  const handleLoadFixedExpenses = async () => {
+    const [year, month] = selectedMonth.split('-');
+    const prevMonthDate = new Date(Number(year), Number(month) - 2, 1);
+    const prevMonthStr = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    
+    const fixedCategories = ["租金", "薪資與勞健保", "貸款", "軟體與網路", "水電瓦斯電信", "管理費", "固定支出"];
+    const lastMonthFixed = expenses.filter(e => e.expense_date.startsWith(prevMonthStr) && fixedCategories.includes(e.category));
+    
+    if (lastMonthFixed.length === 0) {
+      if (window.confirm(`沒有找到上個月 (${prevMonthStr}) 的固定支出紀錄。是否要直接新增一些常用的預設項目以便修改？`)) {
+        const presets = [
+          { item_name: '工作室租金', category: '租金', amount: 0 },
+          { item_name: '勞健保', category: '薪資與勞健保', amount: 0 },
+          { item_name: '薪資', category: '薪資與勞健保', amount: 0 },
+          { item_name: '水費', category: '水電瓦斯電信', amount: 0 },
+          { item_name: '電費', category: '水電瓦斯電信', amount: 0 },
+          { item_name: '電信網卡', category: '水電瓦斯電信', amount: 0 },
+          { item_name: '軟體訂閱', category: '軟體與網路', amount: 0 },
+        ];
+        
+        setLoading(true);
+        try {
+          for (const preset of presets) {
+            await fetch('/api/expenses', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+              body: JSON.stringify({
+                expense_date: `${selectedMonth}-05`,
+                category: preset.category,
+                item_name: preset.item_name,
+                amount: preset.amount,
+                notes: ''
+              })
+            });
+          }
+          await fetchData();
+          showAlert("成功", "已載入常用固定預設項目");
+        } catch(err) {
+          showAlert("錯誤", "載入失敗");
+        } finally {
+          setLoading(false);
+        }
+      }
+      return;
+    }
+
+    if (!window.confirm(`找到 ${lastMonthFixed.length} 筆上月 (${prevMonthStr}) 的固定支出（如租金、薪資、軟體等），確定要全數帶入至本月嗎？`)) return;
+
+    try {
+      setLoading(true);
+      for (const e of lastMonthFixed) {
+        await fetch('/api/expenses', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({
+              expense_date: `${selectedMonth}-${e.expense_date.split('-')[2] || '05'}`,
+              category: e.category,
+              item_name: e.item_name,
+              amount: e.amount,
+              notes: e.notes || ''
+            })
+          });
+      }
+      await fetchData();
+      showAlert("成功", "已帶入上月固定支出");
+    } catch(err) {
+      showAlert("錯誤", "帶入失敗");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDeleteExpense = async (id: number) => {
     if (!window.confirm("確定要刪除此支出紀錄嗎？")) return;
     try {
@@ -736,6 +808,15 @@ export default function FinancialReport({ token, designers, showAlert }: Financi
                 <Download className="w-4 h-4" />
                 匯出 Excel (CSV)
               </button>
+              
+              <button
+                onClick={handleLoadFixedExpenses}
+                className="inline-flex items-center gap-2 bg-stone-100 text-stone-700 border border-stone-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-stone-200 transition-colors"
+                title="自動帶入上一個月的固定開銷"
+              >
+                帶入固定支出
+              </button>
+
               <button
                 onClick={() => {
                   setEditingExpenseId('new');

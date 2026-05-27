@@ -262,6 +262,48 @@ export const LabelGenerator = () => {
       format: paperSize === 'A4' ? 'a4' : [currentWidth, currentHeight]
     });
 
+    const drawPageCropMarks = (pdfDoc: jsPDF) => {
+      pdfDoc.setLineWidth(0.6); // 粗一點點
+      pdfDoc.setDrawColor(50, 50, 50);
+      const markLen = 6;
+      const gapOffset = 3;
+
+      const x_inner = gapOffset + markLen; // 9
+      const y_inner = gapOffset + markLen; // 9
+      const x_outer = gapOffset; // 3
+      const y_outer = gapOffset; // 3
+
+      // 左上 (┘)
+      pdfDoc.line(x_inner, y_inner, x_inner, y_outer);
+      pdfDoc.line(x_inner, y_inner, x_outer, y_inner);
+      
+      // 右上 (└)
+      const rx_inner = currentWidth - gapOffset - markLen;
+      const ry_inner = gapOffset + markLen;
+      const rx_outer = currentWidth - gapOffset;
+      const ry_outer = gapOffset;
+      pdfDoc.line(rx_inner, ry_inner, rx_inner, ry_outer);
+      pdfDoc.line(rx_inner, ry_inner, rx_outer, ry_inner);
+
+      // 左下 (┐)
+      const lx_inner = gapOffset + markLen;
+      const ly_inner = currentHeight - gapOffset - markLen;
+      const lx_outer = gapOffset;
+      const ly_outer = currentHeight - gapOffset;
+      pdfDoc.line(lx_inner, ly_inner, lx_inner, ly_outer);
+      pdfDoc.line(lx_inner, ly_inner, lx_outer, ly_inner);
+
+      // 右下 (┌)
+      const brx_inner = currentWidth - gapOffset - markLen;
+      const bry_inner = currentHeight - gapOffset - markLen;
+      const brx_outer = currentWidth - gapOffset;
+      const bry_outer = currentHeight - gapOffset;
+      pdfDoc.line(brx_inner, bry_inner, brx_inner, bry_outer);
+      pdfDoc.line(brx_inner, bry_inner, brx_outer, bry_inner);
+    };
+
+    drawPageCropMarks(doc);
+
     const data = excelData;
     const gap = 5; // mm
     const layout = getGridLayout();
@@ -282,6 +324,7 @@ export const LabelGenerator = () => {
       
       if (posIndex === 0 && i > 0) {
         doc.addPage();
+        drawPageCropMarks(doc);
       }
 
       const col = posIndex % layout.cols;

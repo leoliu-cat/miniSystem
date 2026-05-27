@@ -105,6 +105,10 @@ export function EditOrderModal({ order, onClose, onSave, templates, designers }:
                   <label className="block text-xs font-medium text-stone-500 mb-1">交件日期</label>
                   <input type="date" name="delivery_date" value={formData.delivery_date || ''} onChange={handleChange} className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm" />
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-stone-500 mb-1">實際出貨日</label>
+                  <input type="date" name="shipped_date" value={formData.shipped_date || ''} onChange={handleChange} className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm" />
+                </div>
               </div>
             </div>
 
