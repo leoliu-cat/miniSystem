@@ -1,5 +1,7 @@
 {
-  "name": "ministylecards-quote",
+  "name": "Remix: ministylecards-quote",
   "description": "Quotation and order management system with shipping barcode scanning and label generation.",
-  "requestFramePermissions": ["camera"]
+  "requestFramePermissions": [
+    "camera"
+  ]
 }

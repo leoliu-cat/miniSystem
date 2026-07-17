@@ -9,7 +9,11 @@ import {
   Image as ImageIcon,
   CheckCircle,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  ChevronDown
 } from "lucide-react";
 
 type EntityType =
@@ -25,10 +29,12 @@ export default function WebsiteAdmin({
   token,
   showAlert,
   showConfirm,
+  onDataChange,
 }: {
   token: string;
   showAlert: any;
   showConfirm: any;
+  onDataChange?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<EntityType>("products");
   const [selectedProductCategoryId, setSelectedProductCategoryId] = useState<number | 'all'>('all');
@@ -39,6 +45,8 @@ export default function WebsiteAdmin({
   const [pricingRules, setPricingRules] = useState<any[]>([]);
   const [presetInclusions, setPresetInclusions] = useState<string[]>([]);
   const [presetVariants, setPresetVariants] = useState<any[]>([]);
+  const [orderMonthFilter, setOrderMonthFilter] = useState<'all' | string>('all');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'unprocessed' | 'processed'>('all');
   const [isLoading, setIsLoading] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [editingItem, setEditingItem] = useState<any | null>(null);
@@ -109,7 +117,7 @@ export default function WebsiteAdmin({
   };
 
   const handleReorder = async (direction: 'up' | 'down', currentId: number, currentList: any[]) => {
-    if (activeTab !== 'products') return;
+    if (activeTab !== 'products' && activeTab !== 'collections') return;
     
     const currentIndex = currentList.findIndex(item => item.id === currentId);
     if (currentIndex === -1) return;
@@ -127,17 +135,14 @@ export default function WebsiteAdmin({
     if (dataIndex1 === -1 || dataIndex2 === -1) return;
 
     const newData = [...data];
-    // Swap their positions in the main array completely (since sort_order is based on index)
-    // Wait, swapping them in the main array might not be just an adjacent swap if they are filtered.
-    // If we just swap their sort_orders?
-    // Since sort_order is reassigned to be index based below, we literally just swap them in the main array.
     [newData[dataIndex1], newData[dataIndex2]] = [newData[dataIndex2], newData[dataIndex1]];
 
     const sortedData = newData.map((item, i) => ({ ...item, sort_order: i }));
     setData(sortedData);
 
     try {
-      const res = await fetch('/api/admin/website/products/reorder', {
+      const endpoint = activeTab === 'products' ? '/api/admin/website/products/reorder' : '/api/admin/website/collections/reorder';
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -171,94 +176,21 @@ export default function WebsiteAdmin({
     if (!file) return;
 
     if (isUploadingImage) return;
-
     setIsUploadingImage(true);
 
-    // Compress image if larger than 2MB
-    if (file.size > 2 * 1024 * 1024) {
-      try {
-        const img = document.createElement("img");
-        const canvas = document.createElement("canvas");
-        const url = URL.createObjectURL(file);
-        
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-          img.src = url;
-        });
-
-        let width = img.width;
-        let height = img.height;
-        const maxDim = 2400; // max width/height increased for better quality
-
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx?.drawImage(img, 0, 0, width, height);
-
-        const blob = await new Promise<Blob | null>((resolve) => 
-          canvas.toBlob(resolve, "image/webp", 0.85)
-        );
-
-        if (blob) {
-          file = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".webp", {
-            type: "image/webp",
-          });
-        }
-        URL.revokeObjectURL(url);
-      } catch (err) {
-        console.error("Image compression failed", err);
-      }
-    }
-
-    if (file.size > 10 * 1024 * 1024) {
-      showAlert("錯誤", "圖片壓縮後仍然大於 10MB");
-      e.target.value = "";
-      setIsUploadingImage(false);
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("file", file);
-
     try {
-      const res = await fetch("/api/admin/upload", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const url = await uploadImageFile(file);
+      if (url) {
         setEditingItem((prev: any) => {
           if (!prev) return prev;
           const newImages = [...(prev.images || [])];
           if (index >= newImages.length) {
-            newImages.push(data.url);
+            newImages.push(url);
           } else {
-            newImages[index] = data.url;
+            newImages[index] = url;
           }
           return { ...prev, images: newImages };
         });
-      } else {
-        if (res.status === 401 || res.status === 403) {
-           showAlert("錯誤", "登入已過期，請重新整理頁面重新登入");
-           return;
-        }
-        const text = await res.text();
-        console.error("Upload failed:", res.status, res.statusText, text);
-        let errStr = "上傳失敗";
-        try { const j = JSON.parse(text); if (j.error) errStr = j.error; } catch(e) {}
-        showAlert("錯誤", `HTTP ${res.status}: ${res.statusText} - ${errStr}`);
       }
     } catch (err: any) {
       showAlert("錯誤", "上傳發生錯誤: " + err.message);
@@ -316,10 +248,23 @@ export default function WebsiteAdmin({
       return null;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
+    const doUpload = async (autoRename: boolean): Promise<any> => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const endpoint = autoRename ? "/api/admin/upload?autoRename=true" : "/api/admin/upload";
+      return await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData });
+    };
 
-    const res = await fetch("/api/admin/upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData });
+    let res = await doUpload(false);
+    
+    if (res.status === 409) {
+       if (confirm(`圖片名稱「${file.name}」已存在，是否自動加上時間戳記避免覆蓋並繼續上傳？\n(若選擇取消，則停止上傳)`)) {
+          res = await doUpload(true);
+       } else {
+          return null; // User cancelled
+       }
+    }
+
     if (res.ok) {
       const data = await res.json();
       return data.url;
@@ -407,7 +352,27 @@ export default function WebsiteAdmin({
     }
   };
 
-  const handleRemoveImage = (index: number) => {
+  const handleRemoveImage = async (index: number) => {
+    const imgUrl = (editingItem.images || [])[index];
+    if (imgUrl) {
+      if (!confirm(`確定要從系統中永久刪除這張圖片嗎？\n(注意：如果在其他商品或地方有使用到這張圖片，將會一併失效)`)) {
+        return; // User cancelled
+      }
+      try {
+        const token = localStorage.getItem("token");
+        await fetch("/api/admin/upload", {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ url: imgUrl })
+        });
+      } catch (err) {
+        console.error("Failed to delete image", err);
+      }
+    }
+    
     const newImages = [...(editingItem.images || [])];
     newImages.splice(index, 1);
     setEditingItem({ ...editingItem, images: newImages });
@@ -532,7 +497,28 @@ export default function WebsiteAdmin({
                             <div className="flex flex-col gap-2 p-2 border border-stone-200 rounded-xl max-w-[200px]">
                                <div className="relative group aspect-square">
                                  <img src={activeTab === "collections" ? editingItem.cover_image : editingItem.feature_image} className="w-full h-full object-cover rounded-lg" alt="" />
-                                 <button type="button" onClick={() => setEditingItem({...editingItem, [activeTab === "collections" ? "cover_image" : "feature_image"]: ""})} className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+                                 <button type="button" onClick={async () => {
+                                    const imgUrl = activeTab === "collections" ? editingItem.cover_image : editingItem.feature_image;
+                                    if (imgUrl) {
+                                      if (!confirm(`確定要從系統中永久刪除這張圖片嗎？\n(注意：如果在其他地方有使用到這張圖片，將會一併失效)`)) {
+                                        return; // User cancelled
+                                      }
+                                      try {
+                                        const token = localStorage.getItem("token");
+                                        await fetch("/api/admin/upload", {
+                                          method: "DELETE",
+                                          headers: {
+                                            "Content-Type": "application/json",
+                                            Authorization: `Bearer ${token}`
+                                          },
+                                          body: JSON.stringify({ url: imgUrl })
+                                        });
+                                      } catch (err) {
+                                        console.error("Failed to delete image", err);
+                                      }
+                                    }
+                                    setEditingItem({...editingItem, [activeTab === "collections" ? "cover_image" : "feature_image"]: ""});
+                                 }} className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
                                     <X className="w-3 h-3" />
                                  </button>
                                </div>
@@ -549,14 +535,13 @@ export default function WebsiteAdmin({
                                  let file = e.target.files?.[0];
                                  if (!file) return;
                                  setIsUploadingImage(true);
-                                 const formData = new FormData();
-                                 formData.append("file", file);
                                  try {
-                                   const res = await fetch("/api/admin/upload", { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData });
-                                   if (res.ok) {
-                                      const data = await res.json();
-                                      setEditingItem({...editingItem, [activeTab === "collections" ? "cover_image" : "feature_image"]: data.url});
+                                   const url = await uploadImageFile(file);
+                                   if (url) {
+                                      setEditingItem({...editingItem, [activeTab === "collections" ? "cover_image" : "feature_image"]: url});
                                    }
+                                 } catch (err: any) {
+                                   showAlert("錯誤", "上傳發生錯誤: " + err.message);
                                  } finally {
                                    setIsUploadingImage(false);
                                  }
@@ -627,6 +612,24 @@ export default function WebsiteAdmin({
                       className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none"
                       placeholder="如: floral-invitation"
                     />
+                  </div>}
+                  {activeTab === "collections" && <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1">
+                      狀態 (在前台顯示)
+                    </label>
+                    <select
+                      value={editingItem.is_active === undefined ? 1 : (editingItem.is_active ? 1 : 0)}
+                      onChange={(e) =>
+                        setEditingItem({
+                          ...editingItem,
+                          is_active: parseInt(e.target.value),
+                        })
+                      }
+                      className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none"
+                    >
+                      <option value={1}>顯示</option>
+                      <option value={0}>隱藏</option>
+                    </select>
                   </div>}
                 </>
               )}
@@ -812,7 +815,26 @@ export default function WebsiteAdmin({
                                <div className="flex gap-2">
                                  <div className="relative group shrink-0">
                                    <img src={opt.image} alt={opt.image_alt || opt.name || `Option ${idx}`} className="w-12 h-12 rounded object-cover border border-stone-200" />
-                                   <button type="button" onClick={() => {
+                                   <button type="button" onClick={async () => {
+                                       const imgUrl = opt.image;
+                                       if (imgUrl) {
+                                         if (!confirm(`確定要從系統中永久刪除這張圖片嗎？\n(注意：如果在其他地方有使用到這張圖片，將會一併失效)`)) {
+                                           return; // User cancelled
+                                         }
+                                         try {
+                                           const token = localStorage.getItem("token");
+                                           await fetch("/api/admin/upload", {
+                                             method: "DELETE",
+                                             headers: {
+                                               "Content-Type": "application/json",
+                                               Authorization: `Bearer ${token}`
+                                             },
+                                             body: JSON.stringify({ url: imgUrl })
+                                           });
+                                         } catch (err) {
+                                           console.error("Failed to delete image", err);
+                                         }
+                                       }
                                        let newOpts = [...(typeof editingItem.options === 'string' ? JSON.parse(editingItem.options || '[]') : editingItem.options || [])];
                                        delete newOpts[idx].image;
                                        delete newOpts[idx].image_alt;
@@ -896,6 +918,25 @@ export default function WebsiteAdmin({
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-stone-700 mb-1">
+                        運費 (Shipping Fee)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={editingItem.shipping_fee !== undefined && editingItem.shipping_fee !== null ? editingItem.shipping_fee : 120}
+                        onChange={(e) =>
+                          setEditingItem({
+                            ...editingItem,
+                            shipping_fee: parseInt(e.target.value) || 0,
+                          })
+                        }
+                        className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-stone-700 mb-1">
                         最低起訂量 (MOQ)
                       </label>
                       <input
@@ -952,6 +993,55 @@ export default function WebsiteAdmin({
                       className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none h-24"
                     />
                   </div>
+                  {activeTab === "products" && (
+                    <div className="bg-stone-50 p-4 rounded-xl border border-stone-200">
+                      <p className="text-sm font-medium text-stone-800 mb-3 flex items-center gap-1.5">
+                        <ImageIcon className="w-4 h-4 text-stone-500" />
+                        Markdown 圖片迴圈設定 (非必填)
+                      </p>
+                      <p className="text-xs text-stone-500 mb-3">
+                        若 Markdown 內有大量命名規律的圖片，可在此設定迴圈變數，方便前端一次展開（例如變數設為 <code>$i</code>）。<br/>
+                        格式範例：<code>![Alt name...](https://.../portfolio-$i.jpg)</code>
+                      </p>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-stone-600 mb-1">
+                            圖片數量 (Length)
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            placeholder="例如：22"
+                            value={editingItem.image_loop_count || ""}
+                            onChange={(e) =>
+                              setEditingItem({
+                                ...editingItem,
+                                image_loop_count: e.target.value ? parseInt(e.target.value) : null,
+                              })
+                            }
+                            className="w-full px-3 py-1.5 text-sm border border-stone-300 rounded-lg focus:ring-2 focus:ring-rose-500 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-stone-600 mb-1">
+                            變數名稱 (Variable)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="例如：$i"
+                            value={editingItem.image_loop_var || ""}
+                            onChange={(e) =>
+                              setEditingItem({
+                                ...editingItem,
+                                image_loop_var: e.target.value,
+                              })
+                            }
+                            className="w-full px-3 py-1.5 text-sm border border-stone-300 rounded-lg focus:ring-2 focus:ring-rose-500 outline-none"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-stone-700 mb-1">
@@ -1050,10 +1140,36 @@ export default function WebsiteAdmin({
                                   <button
                                     type="button"
                                     onClick={() => handleRemoveImage(index)}
-                                    className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap"
                                   >
                                     <X className="w-3 h-3" />
                                   </button>
+                                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {index > 0 && (
+                                      <button type="button" onClick={(e) => {
+                                          e.stopPropagation();
+                                          let newImages = [...(editingItem.images || [])];
+                                          let newAlts = [...(editingItem.image_alts || [])];
+                                          [newImages[index - 1], newImages[index]] = [newImages[index], newImages[index - 1]];
+                                          [newAlts[index - 1], newAlts[index]] = [newAlts[index], newAlts[index - 1]];
+                                          setEditingItem({...editingItem, images: newImages, image_alts: newAlts});
+                                      }} className="bg-black/50 text-white rounded p-0.5 hover:bg-black/70">
+                                        <ChevronLeft className="w-4 h-4" />
+                                      </button>
+                                    )}
+                                    {index < (editingItem.images || []).length - 1 && (
+                                      <button type="button" onClick={(e) => {
+                                          e.stopPropagation();
+                                          let newImages = [...(editingItem.images || [])];
+                                          let newAlts = [...(editingItem.image_alts || [])];
+                                          [newImages[index], newImages[index + 1]] = [newImages[index + 1], newImages[index]];
+                                          [newAlts[index], newAlts[index + 1]] = [newAlts[index + 1], newAlts[index]];
+                                          setEditingItem({...editingItem, images: newImages, image_alts: newAlts});
+                                      }} className="bg-black/50 text-white rounded p-0.5 hover:bg-black/70">
+                                        <ChevronRight className="w-4 h-4" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </>
                               ) : (
                                 <label
@@ -1124,11 +1240,13 @@ export default function WebsiteAdmin({
                              type="button"
                              key={`p-inc-${idx}`}
                              onClick={() => {
-                               const incs = [...(editingItem.inclusions || [])];
+                               let incs = [...(editingItem.inclusions || [])];
                                if (!incs.includes(pInc)) {
                                  incs.push(pInc);
-                                 setEditingItem({ ...editingItem, inclusions: incs });
+                               } else {
+                                 incs = incs.filter((i) => i !== pInc);
                                }
+                               setEditingItem({ ...editingItem, inclusions: incs });
                              }}
                              className={`px-3 py-1 rounded-full border text-xs transition-colors ${(editingItem.inclusions || []).includes(pInc) ? "bg-stone-200 border-stone-300 text-stone-700" : "bg-white border-stone-200 text-stone-600 hover:bg-stone-100"}`}
                            >
@@ -1196,8 +1314,10 @@ export default function WebsiteAdmin({
                                  let newVts = [...vts];
                                  if (!isIncluded) {
                                    newVts.push({ ...pVar });
-                                   setEditingItem({ ...editingItem, variant_items: newVts });
+                                 } else {
+                                   newVts = newVts.filter((v: any) => v.name !== pVar.name);
                                  }
+                                 setEditingItem({ ...editingItem, variant_items: newVts });
                                }}
                                className={`px-3 py-1.5 rounded-xl border text-xs transition-colors flex items-center gap-2 ${isIncluded ? "bg-stone-200 border-stone-300 text-stone-700" : "bg-white border-stone-200 text-stone-600 hover:bg-stone-100"}`}
                              >
@@ -1254,6 +1374,24 @@ export default function WebsiteAdmin({
                                  }}
                                  className="w-24 px-3 py-1.5 text-sm border border-stone-300 rounded-lg focus:ring-2 focus:ring-rose-500 outline-none"
                                />
+                               <button type="button" onClick={() => {
+                                  let vts = [...(editingItem.variant_items || [])];
+                                  if (idx > 0) {
+                                    [vts[idx - 1], vts[idx]] = [vts[idx], vts[idx - 1]];
+                                    setEditingItem({...editingItem, variant_items: vts});
+                                  }
+                               }} className="p-2 text-stone-400 hover:text-stone-700 transition-colors shrink-0" title="往上移">
+                                  <ArrowUp className="w-4 h-4" />
+                               </button>
+                               <button type="button" onClick={() => {
+                                  let vts = [...(editingItem.variant_items || [])];
+                                  if (idx < vts.length - 1) {
+                                    [vts[idx + 1], vts[idx]] = [vts[idx], vts[idx + 1]];
+                                    setEditingItem({...editingItem, variant_items: vts});
+                                  }
+                               }} className="p-2 text-stone-400 hover:text-stone-700 transition-colors shrink-0" title="往下移">
+                                  <ArrowDown className="w-4 h-4" />
+                               </button>
                                <button type="button" onClick={() => {
                                   let vts = [...(editingItem.variant_items || [])];
                                   vts.splice(idx, 1);
@@ -1552,6 +1690,63 @@ export default function WebsiteAdmin({
 
               {activeTab === "orders" && (
                 <>
+                  <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 space-y-2 mb-4">
+                    <h4 className="text-sm font-medium text-stone-800 border-b border-stone-200 pb-2 mb-2">
+                       訂單基本資訊
+                    </h4>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-stone-500">訂單編號:</span>
+                      <span className="font-medium text-stone-800">#{editingItem.id}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-stone-500">會員帳號:</span>
+                      <span className="font-medium text-stone-800">{editingItem.user_email || "訪客"}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-stone-500">成立時間:</span>
+                      <span className="font-medium text-stone-800">
+                         {editingItem.created_at ? new Date(editingItem.created_at + (editingItem.created_at.includes('Z') ? '' : 'Z')).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                      </span>
+                    </div>
+                    {(editingItem.rec_trade_id || editingItem.bank_transaction_id) && (
+                      <>
+                        <div className="flex justify-between items-center text-sm pt-2 mt-2 border-t border-stone-200">
+                          <span className="text-stone-500 flex items-center">
+                              交易識別碼 (recTradeId):
+                              <button onClick={async () => {
+                                  try {
+                                      const res = await fetch(`/api/admin/website/orders/${editingItem.id}/sync`, {
+                                          method: 'POST',
+                                          headers: { 'Authorization': `Bearer ${localStorage.getItem("admin_token")}` }
+                                      });
+                                      const data = await res.json();
+                                      if (data.success) {
+                                          alert(`同步成功！狀態: ${data.status}, Bank Transaction ID: ${data.bank_transaction_id}`);
+                                          setEditingItem({...editingItem, status: data.status, bank_transaction_id: data.bank_transaction_id});
+                                          fetchData("orders");
+                                      } else {
+                                          alert(`同步失敗: ${data.message || data.error}\nRaw Data: ${JSON.stringify(data.raw_data)}`);
+                                      }
+                                  } catch (err: any) {
+                                      console.error("Sync error:", err);
+                                      alert(`Error syncing: ${err.message || 'unknown'}`);
+                                  }
+                              }} type="button" className="ml-2 px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded text-xs">同步 TapPay 最新狀態</button>
+                          </span>
+                          <span className="font-medium text-stone-800 break-all pl-4 text-right">{editingItem.rec_trade_id}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-stone-500">銀行訂單編號 (Bank Transaction ID):</span>
+                          <span className="font-medium text-stone-800 break-all pl-4 text-right">{editingItem.bank_transaction_id}</span>
+                        </div>
+                      </>
+                    )}
+                    {editingItem.payment_error && (
+                      <div className="mt-2 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-200">
+                         <strong>金流錯誤訊息:</strong> {editingItem.payment_error}
+                      </div>
+                    )}
+                  </div>
                   <div>
                     <label className="block text-sm font-medium text-stone-700 mb-1">
                       訂單狀態
@@ -1591,17 +1786,54 @@ export default function WebsiteAdmin({
                         訂單項目
                       </h4>
                       <ul className="space-y-2">
-                        {editingItem.items.map((item: any) => (
-                          <li
-                            key={item.id}
-                            className="text-sm text-stone-600 flex justify-between bg-stone-50 p-2 rounded"
-                          >
-                            <span>
-                              {item.title} x {item.quantity}
-                            </span>
-                            <span>${item.price * item.quantity}</span>
-                          </li>
-                        ))}
+                        {editingItem.items.map((item: any) => {
+                          let configArr: [string, any][] = [];
+                          try {
+                            if (item.config) {
+                              const configObj = JSON.parse(item.config);
+                              configArr = Object.entries(configObj);
+                            }
+                          } catch (e) {}
+
+                          let imageUrl = "";
+                          try {
+                            if (item.images) {
+                              const images = JSON.parse(item.images);
+                              if (images.length > 0) imageUrl = images[0];
+                            }
+                          } catch (e) {}
+
+                          return (
+                            <li
+                              key={item.id}
+                              className="text-sm text-stone-600 flex gap-3 bg-stone-50 border border-stone-200 p-3 rounded-xl"
+                            >
+                              {imageUrl ? (
+                                <img src={imageUrl} alt={item.title} className="w-16 h-16 object-cover rounded-lg border border-stone-200" />
+                              ) : (
+                                <div className="w-16 h-16 bg-stone-200 rounded-lg flex items-center justify-center text-stone-400">無圖</div>
+                              )}
+                              <div className="flex-1 flex flex-col justify-center">
+                                <div className="flex justify-between font-medium text-stone-800 text-sm mb-1">
+                                  <span>
+                                    {item.title}
+                                  </span>
+                                  <span>${item.price.toLocaleString()} x {item.quantity}</span>
+                                </div>
+                                {configArr.length > 0 && (
+                                  <div className="text-xs text-stone-500 bg-white p-2 rounded-lg border border-stone-200 mt-1 space-y-1">
+                                    {configArr.map(([k, v]) => (
+                                      <div key={k} className="flex gap-2">
+                                        <span className="font-medium text-stone-600 min-w-max">{k}:</span>
+                                        <span className="whitespace-pre-wrap">{v as string}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   )}
@@ -1643,6 +1875,22 @@ export default function WebsiteAdmin({
                             }
                           })()}
                         </p>
+                        {(() => {
+                          try {
+                            const shippingInfo = JSON.parse(editingItem.shipping_info);
+                            if (shippingInfo.notes) {
+                              return (
+                                <div className="mt-2 text-stone-700 bg-yellow-50 p-2 rounded border border-yellow-100">
+                                  <span className="font-medium mr-1">備註:</span>
+                                  {shippingInfo.notes}
+                                </div>
+                              );
+                            }
+                            return null;
+                          } catch (e) {
+                            return null;
+                          }
+                        })()}
                       </div>
                     </div>
                   )}
@@ -1796,6 +2044,49 @@ export default function WebsiteAdmin({
                     </div>
                   </div>
 
+                  <div className="mt-4 p-3 bg-stone-50 border border-stone-100 rounded-xl">
+                    <h4 className="text-sm font-medium text-stone-800 mb-3">獨立運費設定 (選填)</h4>
+                    <p className="text-xs text-stone-500 mb-3">若設定此區塊，系統結帳時將以「數量計算出的箱數 x 每箱運費」來收取運費，並取代商品原先的獨立運費。</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">
+                          每箱入數限制
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={editingItem.items_per_box || ""}
+                          onChange={(e) =>
+                            setEditingItem({
+                              ...editingItem,
+                              items_per_box: e.target.value ? parseInt(e.target.value) : null,
+                            })
+                          }
+                          placeholder="例如: 100"
+                          className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-stone-700 mb-1">
+                          單箱運費 ($)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={editingItem.shipping_fee_per_box || ""}
+                          onChange={(e) =>
+                            setEditingItem({
+                              ...editingItem,
+                              shipping_fee_per_box: e.target.value ? parseInt(e.target.value) : null,
+                            })
+                          }
+                          placeholder="例如: 120"
+                          className="w-full px-3 py-2 border border-stone-300 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="mt-4">
                     <label className="block text-sm font-medium text-stone-700 mb-1">
                       備註與活動說明 (例如: 贈送插畫、運費規則)
@@ -1856,7 +2147,34 @@ export default function WebsiteAdmin({
             </form>
           </div>
 
-          <div className="p-6 border-t border-stone-100 flex justify-end gap-3">
+          <div className="p-6 border-t border-stone-100 flex gap-3">
+            {activeTab === "orders" && editingItem.id && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/admin/website/orders/${editingItem.id}/transfer`, {
+                      method: "POST",
+                      headers: { Authorization: `Bearer ${token}` }
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                      showAlert("成功", "已成功轉讓為管理訂單");
+                      setEditingItem(null);
+                      if (onDataChange) onDataChange();
+                    } else {
+                      showAlert("錯誤", data.error || "轉讓失敗");
+                    }
+                  } catch (e: any) {
+                    showAlert("錯誤", e.message || "發生錯誤");
+                  }
+                }}
+                className="px-4 py-2 border border-stone-300 rounded-xl text-stone-600 hover:bg-stone-50 transition-colors flex items-center gap-2 font-medium"
+              >
+                轉為內部管理訂單
+              </button>
+            )}
+            <div className="flex-1"></div>
             <button
               type="button"
               onClick={() => setEditingItem(null)}
@@ -1878,9 +2196,29 @@ export default function WebsiteAdmin({
     );
   };
 
-  const displayData = activeTab === "products" && selectedProductCategoryId !== 'all' 
-    ? data.filter(item => item.category_id === selectedProductCategoryId)
-    : data;
+  let displayData = data;
+  if (activeTab === "products" && selectedProductCategoryId !== 'all') {
+    displayData = data.filter(item => item.category_id === selectedProductCategoryId);
+  } else if (activeTab === "orders") {
+    displayData = data.filter(item => {
+      let matchMonth = true;
+      if (orderMonthFilter !== 'all') {
+         if (!item.created_at) matchMonth = false;
+         else {
+           const date = new Date(item.created_at + (item.created_at.includes('Z') ? '' : 'Z'));
+           const monthFormat = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+           matchMonth = monthFormat === orderMonthFilter;
+         }
+      }
+      let matchStatus = true;
+      if (orderStatusFilter === 'unprocessed') {
+         matchStatus = ['pending_payment', 'paid'].includes(item.status);
+      } else if (orderStatusFilter === 'processed') {
+         matchStatus = ['processing', 'shipped', 'completed', 'cancelled'].includes(item.status);
+      }
+      return matchMonth && matchStatus;
+    });
+  }
 
   return (
     <div className="p-6 h-full flex flex-col">
@@ -1936,6 +2274,34 @@ export default function WebsiteAdmin({
           </div>
         )}
 
+        {activeTab === "orders" && (
+          <div className="flex-1 flex gap-3 min-w-[200px] max-w-md">
+            <select
+              value={orderMonthFilter}
+              onChange={(e) => setOrderMonthFilter(e.target.value)}
+              className="w-1/2 px-3 py-2 border border-stone-200 rounded-xl bg-white focus:ring-2 focus:ring-rose-500 outline-none text-sm text-stone-600"
+            >
+              <option value="all">所有月份</option>
+              {Array.from(new Set(data.map(d => {
+                 if (!d.created_at) return '';
+                 const date = new Date(d.created_at + (d.created_at.includes('Z') ? '' : 'Z'));
+                 return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+              }))).filter(Boolean).sort((a,b) => b.localeCompare(a)).map(month => (
+                <option key={month} value={month}>{month}</option>
+              ))}
+            </select>
+            <select
+              value={orderStatusFilter}
+              onChange={(e) => setOrderStatusFilter(e.target.value as any)}
+              className="w-1/2 px-3 py-2 border border-stone-200 rounded-xl bg-white focus:ring-2 focus:ring-rose-500 outline-none text-sm text-stone-600"
+            >
+              <option value="all">所有狀態</option>
+              <option value="unprocessed">待處理/已付款</option>
+              <option value="processed">已處理 (含轉單/出貨等)</option>
+            </select>
+          </div>
+        )}
+
         {activeTab !== "orders" && (
           <button
             onClick={() => {
@@ -1943,6 +2309,7 @@ export default function WebsiteAdmin({
               if (activeTab === "products") {
                 initItem.variant_items = [];
                 initItem.inclusions = [];
+                initItem.shipping_fee = 120;
                 initItem.addon_group_ids = globalAddonGroups
                   .filter((g: any) => g.is_default_for_invitation)
                   .map((g: any) => g.id);
@@ -1980,8 +2347,18 @@ export default function WebsiteAdmin({
                 ID
               </th>
               <th className="py-3 px-4 text-xs font-medium text-stone-500 uppercase">
-                名稱
+                {activeTab === "orders" ? "收件人" : "名稱"}
               </th>
+              {activeTab === "orders" && (
+                <>
+                  <th className="py-3 px-4 text-xs font-medium text-stone-500 uppercase">
+                    帳號 (Email)
+                  </th>
+                  <th className="py-3 px-4 text-xs font-medium text-stone-500 uppercase">
+                    建立時間
+                  </th>
+                </>
+              )}
               {activeTab === "products" ? (
                 <>
                   <th className="py-3 px-4 text-xs font-medium text-stone-500 uppercase">
@@ -1996,7 +2373,7 @@ export default function WebsiteAdmin({
                   {activeTab === "orders" ? "總金額" : activeTab === "addon_groups" ? "類型" : activeTab === "pricing_rules" ? "類型" : "Slug"}
                 </th>
               )}
-              {activeTab === "products" && (
+              {(activeTab === "products" || activeTab === "collections") && (
                 <th className="py-3 px-4 text-xs font-medium text-stone-500 uppercase">
                   狀態
                 </th>
@@ -2035,11 +2412,27 @@ export default function WebsiteAdmin({
                   </td>
                   <td className="py-3 px-4 text-sm font-medium text-stone-800">
                     {activeTab === "orders"
-                      ? item.user_id
-                        ? `用戶 ID: ${item.user_id}`
-                        : "訪客"
+                      ? (() => {
+                          try {
+                            const shippingInfo = item.shipping_info ? JSON.parse(item.shipping_info) : null;
+                            const name = shippingInfo?.name || `用戶 ID: ${item.user_id || "訪客"}`;
+                            return name;
+                          } catch (e) {
+                            return `用戶 ID: ${item.user_id || "訪客"}`;
+                          }
+                        })()
                       : item.title || item.name}
                   </td>
+                  {activeTab === "orders" && (
+                    <>
+                      <td className="py-3 px-4 text-sm text-stone-500">
+                        {item.user_email || "訪客"}
+                      </td>
+                      <td className="py-3 px-4 text-sm text-stone-500">
+                        {item.created_at ? new Date(item.created_at + (item.created_at.includes('Z') ? '' : 'Z')).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                      </td>
+                    </>
+                  )}
                   {activeTab === "products" ? (
                     <>
                       <td className="py-3 px-4 text-sm text-stone-500">
@@ -2063,22 +2456,26 @@ export default function WebsiteAdmin({
                             : item.slug}
                     </td>
                   )}
-                  {activeTab === "products" && (
+                  {(activeTab === "products" || activeTab === "collections") && (
                     <td className="py-3 px-4 text-sm">
-                      {item.is_active ? (
+                      {item.is_active || item.is_active === undefined ? (
                         <span className="text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full text-xs font-medium">
-                          上架中
+                          {activeTab === "collections" ? "顯示中" : "上架中"}
                         </span>
                       ) : (
                         <span className="text-stone-500 bg-stone-100 px-2.5 py-0.5 rounded-full text-xs font-medium">
-                          下架中
+                          {activeTab === "collections" ? "隱藏中" : "下架中"}
                         </span>
                       )}
                     </td>
                   )}
                   {activeTab === "orders" && (
                     <td className="py-3 px-4 text-sm">
-                      <span className="text-stone-600 bg-stone-100 px-2.5 py-0.5 rounded-full text-xs font-medium">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        item.status === "paid" ? "bg-green-100 text-green-700" :
+                        ["processing", "shipped", "completed"].includes(item.status) ? "bg-blue-100 text-blue-700" :
+                        "text-stone-600 bg-stone-100"
+                      }`}>
                         {item.status === "pending_payment"
                           ? "待付款"
                           : item.status === "paid"
@@ -2096,7 +2493,7 @@ export default function WebsiteAdmin({
                     </td>
                   )}
                   <td className="py-3 px-4 text-right">
-                    {activeTab === "products" && (
+                    {(activeTab === "products" || activeTab === "collections") && (
                       <>
                         <button
                           onClick={() => handleReorder('up', item.id, displayData)}
@@ -2258,9 +2655,27 @@ export default function WebsiteAdmin({
                     />
                     <button onClick={() => {
                         const newP = [...presetVariants];
+                        if (idx > 0) {
+                          [newP[idx - 1], newP[idx]] = [newP[idx], newP[idx - 1]];
+                          setPresetVariants(newP);
+                        }
+                    }} className="p-2 text-stone-400 hover:text-stone-700 shrink-0 border-transparent" title="往上移">
+                      <ArrowUp className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => {
+                        const newP = [...presetVariants];
+                        if (idx < newP.length - 1) {
+                          [newP[idx + 1], newP[idx]] = [newP[idx], newP[idx + 1]];
+                          setPresetVariants(newP);
+                        }
+                    }} className="p-2 text-stone-400 hover:text-stone-700 shrink-0 border-transparent" title="往下移">
+                      <ArrowDown className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => {
+                        const newP = [...presetVariants];
                         newP.splice(idx, 1);
                         setPresetVariants(newP);
-                    }} className="p-2 text-stone-400 hover:text-red-500 shrink-0">
+                    }} className="p-2 text-stone-400 hover:text-red-500 shrink-0 border-transparent">
                       <X className="w-4 h-4" />
                     </button>
                   </div>

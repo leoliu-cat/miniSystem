@@ -14,6 +14,7 @@ import WebsiteAdmin from './components/WebsiteAdmin';
 import { Document, Page, pdfjs } from 'react-pdf';
 
 import ShopProductDetail from './components/ShopProductDetail';
+import ShopCheckout from './components/ShopCheckout';
 
 // Email Notification Form Component
 const ShippingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: any, token: string, settings: Record<string, string>, onSettingsUpdated: () => void }) => {
@@ -203,9 +204,9 @@ const ShippingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: a
                 <button
                   onClick={handleSend}
                   disabled={isSending}
-                  className="px-4 py-1.5 bg-rose-600 text-white rounded-md text-sm font-medium hover:bg-rose-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                  className="px-4 py-1.5 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  {isSending ? '發送中...' : sendSuccess ? '已發送 ✓' : '直接寄出'}
+                  {isSending ? '發送中...' : sendSuccess ? '已發送 ✓' : '發送出貨通知'}
                 </button>
               </div>
             </>
@@ -286,6 +287,7 @@ export type WeddingData = {
   marketing_count_30d?: number;
   last_marketing_sent_at?: string;
   notes?: string;
+  is_printed?: number;
 };
 
 type TemplateData = {
@@ -295,6 +297,8 @@ type TemplateData = {
   filename_back?: string;
   nas_url?: string;
   nas_smb?: string;
+  category?: string;
+  editable_fields?: string;
 };
 
 export const processingOptionsSchema: Record<string, {display: string, value: string}[]> = {
@@ -685,32 +689,37 @@ const MarketingEmailForm = ({ sub, token, settings, onSettingsUpdated }: { sub: 
                 className="w-full px-2 py-1.5 text-sm border border-stone-300 rounded focus:ring-1 focus:ring-rose-500 outline-none min-h-[100px]"
                 placeholder="信件內文"
               />
+              <div className="flex justify-end pt-2">
+                <button 
+                  onClick={() => {
+                    if (confirm('確定要發送這封行銷信件給該客戶嗎？')) {
+                      handleSend();
+                    }
+                  }}
+                  disabled={isSending}
+                  className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    sendSuccess 
+                      ? 'bg-green-500 text-white' 
+                      : 'bg-purple-600 hover:bg-purple-700 text-white disabled:bg-stone-300 disabled:cursor-not-allowed'
+                  }`}
+                >
+                  {sendSuccess ? (
+                    <><CheckCircle className="w-4 h-4" /> 已發送</>
+                  ) : (
+                    <><Send className="w-4 h-4" /> {isSending ? '發送中...' : '發送行銷信件'}</>
+                  )}
+                </button>
+              </div>
             </>
           )}
         </div>
       )}
-
-      <button 
-        onClick={handleSend}
-        disabled={isSending}
-        className={`w-full flex items-center justify-center gap-2 py-1.5 rounded text-sm font-medium transition-colors ${
-          sendSuccess 
-            ? 'bg-green-500 text-white' 
-            : 'bg-rose-500 hover:bg-rose-600 text-white disabled:bg-stone-300'
-        }`}
-      >
-        {sendSuccess ? (
-          <><CheckCircle className="w-4 h-4" /> 已發送</>
-        ) : (
-          <><Send className="w-4 h-4" /> {isSending ? '發送中...' : '發送行銷信件'}</>
-        )}
-      </button>
     </div>
   );
 };
 
 export default function App() {
-  const [view, setView] = useState<"form" | "success" | "dashboard" | "login" | "quotation_link" | "product_detail">("form");
+  const [view, setView] = useState<"form" | "success" | "dashboard" | "login" | "quotation_link" | "product_detail" | "checkout" | "financial_report">("form");
   const [currentProductId, setCurrentProductId] = useState<string | null>(null);
   const [dashboardTab, setDashboardTab] = useState<"orders" | "quotation" | "quotation_records" | "quotation_settings" | "templates" | "marketing" | "shipping" | "labels" | "website_admin">("orders");
   const [editQuoteData, setEditQuoteData] = useState<any>(null);
@@ -809,6 +818,8 @@ export default function App() {
   const [uploadName, setUploadName] = useState("");
   const [uploadNasUrl, setUploadNasUrl] = useState("");
   const [uploadNasSmb, setUploadNasSmb] = useState("");
+  const [uploadCategory, setUploadCategory] = useState("");
+  const [uploadEditableFields, setUploadEditableFields] = useState("");
   const [uploadImage, setUploadImage] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<TemplateData | null>(null);
@@ -859,6 +870,8 @@ export default function App() {
         setCurrentQuoteId(id);
         setView("quotation_link");
       }
+    } else if (path === "/checkout") {
+      setView("checkout");
     } else if (path === "/admin" || path === "/") {
       if (token) {
         loadDashboard(token);
@@ -1007,7 +1020,7 @@ export default function App() {
           type: "alert",
           title: "成功",
           message: `訂單已建立！專屬客戶填單網址:\n${link}`,
-          linkToCopy: link
+          linkToCopy: `${link}\n再麻煩您填寫婚宴資訊, 謝謝您喔！！`
         });
         loadDashboard();
       } else {
@@ -1220,6 +1233,25 @@ export default function App() {
       }
     } catch (error) {
       console.error("Error changing status:", error);
+    }
+  };
+
+  const handleTogglePrinted = async (orderId: number, currentPrintedState: boolean | undefined) => {
+    try {
+      const newPrintedState = !currentPrintedState;
+      const res = await fetch(`/api/weddings/${orderId}/is-printed`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ is_printed: newPrintedState }),
+      });
+      if (res.ok) {
+        setSubmissions(prev => prev.map(sub => sub.id === orderId ? { ...sub, is_printed: newPrintedState ? 1 : 0 } : sub));
+      }
+    } catch (error) {
+      console.error("Error toggling printed status:", error);
     }
   };
 
@@ -1440,6 +1472,8 @@ export default function App() {
     formData.append("name", uploadName);
     formData.append("nas_url", uploadNasUrl);
     formData.append("nas_smb", uploadNasSmb);
+    formData.append("category", uploadCategory);
+    formData.append("editable_fields", uploadEditableFields);
     if (uploadImage) formData.append("file", uploadImage);
 
     try {
@@ -1479,18 +1513,12 @@ export default function App() {
     <div className="min-h-screen bg-stone-50 text-stone-900 font-sans">
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView("form")}>
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => loadDashboard()}>
             <FileText className="text-rose-500" />
             <span className="font-serif font-semibold text-xl tracking-wide">MiniStyleCards</span>
           </div>
           {currentUser && (
             <nav className="flex gap-4">
-              <button
-                onClick={() => setView("form")}
-                className={`text-sm font-medium ${view === "form" ? "text-rose-500" : "text-stone-500 hover:text-stone-900"}`}
-              >
-                填寫表單 (客戶端)
-              </button>
               <button
                 onClick={() => loadDashboard()}
                 className={`text-sm font-medium ${view === "dashboard" ? "text-rose-500" : "text-stone-500 hover:text-stone-900"}`}
@@ -1513,6 +1541,12 @@ export default function App() {
       <main className={view === "product_detail" ? "" : "max-w-5xl mx-auto px-4 py-12"}>
         {view === "product_detail" && currentProductId && (
           <ShopProductDetail productIdOrSlug={currentProductId} />
+        )}
+        {view === "checkout" && (
+          <ShopCheckout onSuccess={() => {
+            alert("付款成功！");
+            window.location.href = "/";
+          }} />
         )}
         {view === "form" && (
           <div className="max-w-2xl mx-auto bg-white p-8 rounded-2xl shadow-sm border border-stone-100">
@@ -2164,7 +2198,7 @@ export default function App() {
                             {(() => {
                               const invitationOrders = statsSubmissions.filter(sub => sub.order_type === 'invitation');
                               return invitationOrders.length > 0 
-                                ? Math.round(invitationOrders.reduce((acc, sub) => acc + (sub.invitation_quantity || 0), 0) / invitationOrders.length)
+                                ? Math.round(invitationOrders.reduce((acc, sub) => acc + Number(sub.invitation_quantity || 0), 0) / invitationOrders.length)
                                 : 0;
                             })()}
                           </p>
@@ -2394,10 +2428,26 @@ export default function App() {
                             const isExpanded = expandedOrderId === sub.id;
                             return (
                               <React.Fragment key={sub.id}>
-                                <tr className="hover:bg-stone-50/50 transition-colors border-b-0">
+                                <tr className={`hover:bg-stone-50/50 transition-colors border-b-0 ${sub.is_printed ? 'bg-orange-100' : ''}`}>
                                   <td className="py-4 px-6 text-sm">
-                                    <div className="font-medium text-stone-800">#{sub.id}</div>
-                                    <div className="text-xs text-stone-500">{sub.order_code}</div>
+                                    <div className="flex items-start gap-2">
+                                      <input 
+                                        type="checkbox" 
+                                        checked={!!sub.is_printed} 
+                                        onChange={(e) => {
+                                          e.stopPropagation();
+                                          if (sub.id) {
+                                            handleTogglePrinted(sub.id, !!sub.is_printed);
+                                          }
+                                        }}
+                                        className="mt-1 w-4 h-4 text-orange-500 rounded border-stone-300 focus:ring-orange-500 cursor-pointer"
+                                        title="標記為已列印"
+                                      />
+                                      <div>
+                                        <div className="font-medium text-stone-800">#{sub.id}</div>
+                                        <div className="text-xs text-stone-500">{sub.order_code}</div>
+                                      </div>
+                                    </div>
                                   </td>
                                   <td className="py-4 px-6">
                                     <div className="font-medium text-stone-800">{sub.social_id || "-"}</div>
@@ -2457,12 +2507,12 @@ export default function App() {
                                     </select>
                                   </td>
                                 </tr>
-                                <tr className="hover:bg-stone-50/50 transition-colors border-t-0">
+                                <tr className={`hover:bg-stone-50/50 transition-colors border-t-0 ${sub.is_printed ? 'bg-orange-100' : ''}`}>
                                   <td colSpan={6} className="pt-0 pb-4 px-6 text-right">
                                     <div className="flex flex-wrap items-center justify-end gap-2">
                                         <button
                                           onClick={() => {
-                                            const url = `${window.location.origin}/form/${sub.order_code}`;
+                                            const url = `${window.location.origin}/form/${sub.order_code}\n再麻煩您填寫婚宴資訊, 謝謝您喔！！`;
                                             navigator.clipboard.writeText(url);
                                             showAlert("成功", "已複製問卷表單連結！");
                                           }}
@@ -2541,7 +2591,7 @@ export default function App() {
                                   </td>
                                 </tr>
                                 {isExpanded && (
-                                  <tr className="bg-stone-50/80 border-b border-stone-200">
+                                  <tr className={`${sub.is_printed ? 'bg-orange-100' : 'bg-stone-50/80'} border-b border-stone-200`}>
                                     <td colSpan={7} className="px-6 py-4">
                                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
                                         <div>
@@ -2596,6 +2646,17 @@ export default function App() {
                                           </div>
                                         </div>
                                         <div className="md:col-span-3 border-t border-stone-200 pt-4 mt-2">
+                                          {sub.notes && (
+                                            <div className="mb-6">
+                                              <h4 className="font-medium text-stone-800 mb-2 flex items-center gap-2">
+                                                <AlertCircle className="w-4 h-4 text-amber-500" />
+                                                內部備註
+                                              </h4>
+                                              <div className="bg-amber-50 text-amber-900 p-3 rounded-lg text-sm border border-amber-100 whitespace-pre-wrap">
+                                                {sub.notes}
+                                              </div>
+                                            </div>
+                                          )}
                                           <h4 className="font-medium text-stone-800 mb-3 flex items-center gap-2">
                                             <Tag className="w-4 h-4 text-rose-500" />
                                             客戶標籤
@@ -3035,9 +3096,21 @@ export default function App() {
                   }
                 }
 
+                let initialSocialId = quote.ig_handle || '';
+                let initialContactSource = '';
+                const contactSources = ['FB', 'IG', 'Line', '官網', '親友介紹', '其他'];
+                for (const src of contactSources) {
+                  if (initialSocialId.startsWith(`${src}_`)) {
+                    initialContactSource = src;
+                    initialSocialId = initialSocialId.substring(src.length + 1);
+                    break;
+                  }
+                }
+
                 setNewOrderData({
                   ...newOrderData,
-                  social_id: quote.ig_handle || '',
+                  social_id: initialSocialId,
+                  contact_source: initialContactSource,
                   delivery_date: quote.delivery_date || '',
                   amount: quote.total_amount || 0,
                   invitation_quantity: data.customer?.quantity?.toString() || '',
@@ -3243,7 +3316,7 @@ export default function App() {
 
             {dashboardTab === "website_admin" && (
               <div className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden" style={{ minHeight: 'calc(100vh - 200px)' }}>
-                <WebsiteAdmin token={token} showAlert={showAlert} showConfirm={showConfirm} />
+                <WebsiteAdmin token={token} showAlert={showAlert} showConfirm={showConfirm} onDataChange={() => loadDashboard()} />
               </div>
             )}
           </div>

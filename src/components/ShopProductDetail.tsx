@@ -34,6 +34,7 @@ interface ProductType {
   inclusions: string[];
   addon_groups?: any[];
   related?: any[];
+  pricing_rule?: any;
 }
 
 export default function ShopProductDetail({
@@ -236,7 +237,13 @@ export default function ShopProductDetail({
     });
   }
 
-  const finalTotal = totalPrice * quantity + totalAddonPrice;
+  let computedShippingFee = product.shipping_fee !== undefined && product.shipping_fee !== null ? product.shipping_fee : 120;
+  if (product.pricing_rule && product.pricing_rule.items_per_box && product.pricing_rule.shipping_fee_per_box != null) {
+      const boxes = Math.ceil(quantity / product.pricing_rule.items_per_box);
+      computedShippingFee = boxes * product.pricing_rule.shipping_fee_per_box;
+  }
+
+  const finalTotal = totalPrice * quantity + totalAddonPrice + computedShippingFee;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 font-sans text-stone-800">
@@ -727,6 +734,12 @@ export default function ShopProductDetail({
 
           {/* Add to Cart Sticky Box logic */}
           <div className="bg-white sticky bottom-0 border-t lg:border-none pt-4 lg:pt-0 mt-auto flex flex-col">
+            {computedShippingFee > 0 && (
+              <div className="flex justify-between items-center mb-2 text-sm text-stone-500">
+                <span>運費</span>
+                <span>NT$ {computedShippingFee.toLocaleString()}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center mb-4">
               <span className="text-stone-700 font-medium">總金額</span>
               <span className="text-2xl font-serif text-stone-900 border-b border-transparent">
@@ -734,8 +747,21 @@ export default function ShopProductDetail({
               </span>
             </div>
 
-            <button className="w-full bg-stone-800 text-white font-medium py-4 text-sm flex items-center justify-center gap-2 hover:bg-stone-900 transition-colors shadow-lg">
-              <ShoppingCart className="w-4 h-4" /> 加入購物車
+            <button onClick={() => {
+              const mockCart = {
+                total: finalTotal,
+                items: [{
+                  product_id: product.id,
+                  quantity: quantity,
+                  price: totalPrice,
+                  options: selectedAddons,
+                  shipping_fee: computedShippingFee
+                }]
+              };
+              localStorage.setItem('website_cart', JSON.stringify(mockCart));
+              window.location.href = "/checkout";
+            }} className="w-full bg-stone-800 text-white font-medium py-4 text-sm flex items-center justify-center gap-2 hover:bg-stone-900 transition-colors shadow-lg">
+              <ShoppingCart className="w-4 h-4" /> 加入購物車 / 直接結帳
             </button>
             <button className="w-full mt-3 bg-white text-stone-800 border border-stone-300 font-medium py-3 text-sm flex items-center justify-center gap-2 hover:bg-stone-50 transition-colors">
               <Heart className="w-4 h-4" /> 加入我的收藏

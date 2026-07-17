@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { format, differenceInDays, parseISO } from 'date-fns';
-import { FileText, ArrowRight, AlertCircle, Trash2, Copy, TrendingUp, Calendar, Download, Edit2 } from 'lucide-react';
+import { FileText, ArrowRight, AlertCircle, Trash2, Copy, TrendingUp, Calendar, Download, Edit2, DollarSign } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
@@ -11,19 +11,29 @@ interface QuotationListProps {
 
 export default function QuotationList({ onConvertToOrder, onEditQuote }: QuotationListProps) {
   const [quotations, setQuotations] = useState<any[]>([]);
+  const [expenses, setExpenses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState('');
 
-  const fetchQuotations = async () => {
+  const fetchData = async () => {
     try {
-      const response = await fetch('/api/quotations', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('admin_token')}`
-        }
-      });
-      if (response.ok) {
-        const data = await response.json();
+      const [quotationsRes, expensesRes] = await Promise.all([
+        fetch('/api/quotations', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('admin_token')}`
+          }
+        }),
+        fetch('/api/expenses', {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('admin_token')}`
+          }
+        })
+      ]);
+
+      if (quotationsRes.ok) {
+        const data = await quotationsRes.json();
         setQuotations(data);
         
         // Set default selected month to the most recent one if not set
@@ -32,16 +42,24 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
           setSelectedMonth(format(mostRecent, 'yyyy-MM'));
         }
       }
+
+      if (expensesRes.ok) {
+        setExpenses(await expensesRes.json());
+      }
     } catch (error) {
-      console.error('Error fetching quotations:', error);
+      console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchQuotations();
+    fetchData();
   }, []);
+
+  const fetchQuotations = async () => {
+    fetchData(); // Simplified to just call fetchData again
+  };
 
   const handleDelete = async (id: number) => {
     try {
@@ -312,20 +330,45 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
   }, [quotations]);
 
   const filteredQuotations = useMemo(() => {
-    if (!selectedMonth) return quotations;
-    return quotations.filter(q => {
-      if (!q.created_at) return false;
-      return format(new Date(q.created_at), 'yyyy-MM') === selectedMonth;
-    });
-  }, [quotations, selectedMonth]);
+    let filtered = quotations;
+    if (selectedMonth) {
+      filtered = filtered.filter(q => {
+        if (!q.created_at) return false;
+        return format(new Date(q.created_at), 'yyyy-MM') === selectedMonth;
+      });
+    }
+    
+    if (searchQuery.trim()) {
+      const lowerQuery = searchQuery.toLowerCase();
+      filtered = filtered.filter(q => {
+        const nameMatch = (q.customer_name || '').toLowerCase().includes(lowerQuery);
+        const amountMatch = String(q.total_amount || '').includes(lowerQuery);
+        const statusStr = q.status === 'ordered' ? '已轉單' : '報價中';
+        const statusMatch = statusStr.includes(lowerQuery);
+        
+        return nameMatch || amountMatch || statusMatch;
+      });
+    }
+    
+    return filtered;
+  }, [quotations, selectedMonth, searchQuery]);
 
   const stats = useMemo(() => {
     const total = filteredQuotations.length;
-    const converted = filteredQuotations.filter(q => q.status === 'ordered').length;
+    const convertedOrders = filteredQuotations.filter(q => q.status === 'ordered');
+    const converted = convertedOrders.length;
     const conversionRate = total > 0 ? Math.round((converted / total) * 100) : 0;
     
-    return { total, converted, conversionRate };
-  }, [filteredQuotations]);
+    const totalConvertedAmount = convertedOrders.reduce((sum, q) => sum + (Number(q.total_amount) || 0), 0);
+    const averageValue = converted > 0 ? Math.round(totalConvertedAmount / converted) : 0;
+    const totalQuotedAmount = filteredQuotations.reduce((sum, q) => sum + (Number(q.total_amount) || 0), 0);
+    
+    const totalExpensesForMonth = expenses
+      .filter(e => selectedMonth && e.expense_date && e.expense_date.startsWith(selectedMonth))
+      .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    
+    return { total, converted, conversionRate, averageValue, totalQuotedAmount, totalExpensesForMonth };
+  }, [filteredQuotations, expenses, selectedMonth]);
 
   if (loading) {
     return <div className="p-8 text-center text-stone-500">載入中...</div>;
@@ -334,7 +377,7 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
   return (
     <div className="space-y-6">
       {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 flex items-center justify-between">
           <div>
             <p className="text-sm font-medium text-stone-500 mb-1">報價次數</p>
@@ -362,6 +405,27 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
             <TrendingUp className="w-6 h-6" />
           </div>
         </div>
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-stone-500 mb-1">平均客單價</p>
+            <p className="text-3xl font-bold text-stone-800">${stats.averageValue.toLocaleString()}</p>
+          </div>
+          <div className="w-12 h-12 bg-purple-50 rounded-full flex items-center justify-center text-purple-500">
+            <DollarSign className="w-6 h-6" />
+          </div>
+        </div>
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-stone-500 mb-1">
+              本月報價總額
+            </p>
+            <p className="text-2xl font-bold text-stone-800">${stats.totalQuotedAmount.toLocaleString()}</p>
+            <p className="text-[10px] text-stone-400 mt-1">支出: ${stats.totalExpensesForMonth.toLocaleString()}</p>
+          </div>
+          <div className="w-12 h-12 bg-orange-50 rounded-full flex items-center justify-center text-orange-500">
+            <DollarSign className="w-6 h-6" />
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl shadow-sm border border-stone-200 overflow-hidden">
@@ -372,6 +436,13 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
           </h2>
           
           <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="搜尋名稱/金額/狀態..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="px-3 py-1.5 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 transition-shadow w-48"
+            />
             <Calendar className="w-4 h-4 text-stone-400" />
             <select
               value={selectedMonth}

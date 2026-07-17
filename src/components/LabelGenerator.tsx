@@ -27,6 +27,8 @@ export const LabelGenerator = () => {
   
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [excelData, setExcelData] = useState<LabelData[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatingProgress, setGeneratingProgress] = useState(0);
   
   const [labelWidth, setLabelWidth] = useState(150);
   const [labelHeight, setLabelHeight] = useState(50);
@@ -45,7 +47,10 @@ export const LabelGenerator = () => {
     { label: 'Courier New', value: 'Courier New' },
     { label: 'Verdana', value: 'Verdana' },
     { label: 'Georgia', value: 'Georgia' },
-    { label: 'Noto Sans TC', value: 'Noto Sans TC' }
+    { label: 'Noto Sans TC', value: 'Noto Sans TC' },
+    { label: '標楷體 (Windows)', value: 'DFKai-SB' },
+    { label: '標楷體 (Mac)', value: 'BiauKai' },
+    { label: '微軟正黑體', value: 'Microsoft JhengHei' }
   ]);
 
   const a4Width = 210;
@@ -252,6 +257,9 @@ export const LabelGenerator = () => {
   const generatePDF = async () => {
     if (!imageUrl || excelData.length === 0) return;
 
+    setIsGenerating(true);
+    setGeneratingProgress(0);
+
     // Ensure calculation uses the dynamic paper dimensions
     const currentWidth = paperSize === 'A4' ? a4Width : customWidth;
     const currentHeight = paperSize === 'A4' ? a4Height : customHeight;
@@ -263,7 +271,7 @@ export const LabelGenerator = () => {
     });
 
     const drawPageCropMarks = (pdfDoc: jsPDF) => {
-      pdfDoc.setLineWidth(0.6); // 粗一點點
+      pdfDoc.setLineWidth(1.2); // 更粗一點點
       pdfDoc.setDrawColor(50, 50, 50);
       const markLen = 6;
       const gapOffset = 3;
@@ -335,11 +343,13 @@ export const LabelGenerator = () => {
       const y = startY + row * (labelHeight + gap);
 
       const canvas = document.createElement('canvas');
-      const scale = 12; // 300 DPI
+      const scale = 8; // Increased for better print quality
       canvas.width = labelWidth * scale;
       canvas.height = labelHeight * scale;
       const ctx = canvas.getContext('2d')!;
 
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
 
       const drawText = (text: string, config: TextConfig, prefix: string) => {
@@ -421,11 +431,19 @@ export const LabelGenerator = () => {
       drawText(item.Address, addressConfig, 'Address/    ');
       drawText(item.Address2, address2Config, '');
 
+      // Use PNG for lossless quality
       const imgData = canvas.toDataURL('image/png');
       doc.addImage(imgData, 'PNG', x, y, labelWidth, labelHeight);
+      
+      setGeneratingProgress(Math.round(((i + 1) / data.length) * 100));
+      // Yield to the browser to prevent UI freeze
+      if (i % 5 === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
     }
 
     doc.save('labels.pdf');
+    setIsGenerating(false);
   };
 
   const renderConfigOptions = (title: string, config: TextConfig, setConfig: React.Dispatch<React.SetStateAction<TextConfig>>) => (
@@ -599,10 +617,10 @@ export const LabelGenerator = () => {
             {/* Action */}
             <button 
                 onClick={generatePDF} 
-                disabled={!imageUrl || excelData.length === 0}
+                disabled={!imageUrl || excelData.length === 0 || isGenerating}
                 className="w-full bg-stone-900 text-white py-4 rounded-xl font-bold shadow-lg hover:bg-stone-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              下載 PDF 標籤
+              {isGenerating ? `產生中... ${generatingProgress}%` : '下載 PDF 標籤'}
             </button>
 
           </div>

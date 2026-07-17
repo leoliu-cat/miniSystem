@@ -137,6 +137,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
   const [customer, setCustomer] = useState({
     name: '',
     ig: '',
+    contactSource: '',
     email: '',
     phone: '',
     weddingDate: '',
@@ -202,6 +203,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
       setCustomer({
         name: '',
         ig: '',
+        contactSource: '',
         email: '',
         phone: '',
         weddingDate: '',
@@ -282,7 +284,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
         if (petCount > 0) illStr += ` + 寵物 ${petCount}隻 ${petCount * ill.petPrice}元`;
         illStr += `)`;
         
-        const customText = `插畫師專屬插畫\n老師：${ill.teacher}\n畫風：${ill.style}\n費用： ${illStr} = NT$ ${illTotal.toLocaleString()}`;
+        const customText = `插畫師專屬插畫\n老師：${ill.teacher}\n畫風：${ill.style}\n費用： ${illStr} = NT$ ${illTotal.toLocaleString()}\n\n**豆豆/色塊/蠟筆/線條風格不提供服裝造型姿勢修改，依照片為主繪製\n**豆豆風/蠟筆/戴花似顏繪都是以老師風格為主，偏卡通可愛風格，相似度不高，若對相似度或細節有強迫症或一定要求的新人，請另購我們的韓風寫實插畫唷，謝謝`;
         
         addonDetails.push({
           name: `插畫師專屬插畫`,
@@ -450,7 +452,8 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
     const { pkg, calcQty, baseTotal, addonDetails, setupFee, discountName, discountAmount, subtotalValue, shippingFee, finalTotal } = quotationData;
     
     let text = `您好，您的訂購資訊與報價如下：\n\n`;
-    text += `👤 客戶：${customer.ig || '未填寫'}\n`;
+    const contactStr = customer.contactSource ? `${customer.contactSource}_${customer.ig}` : customer.ig;
+    text += `👤 客戶：${contactStr || '未填寫'}\n`;
     text += `   婚期：${customer.weddingDate || '未填寫'}\n`;
     text += `   交期：${customer.deliveryDate || '未填寫'}\n`;
     if (notes) {
@@ -577,9 +580,10 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
   const handleSaveQuotation = async () => {
     setIsSaving(true);
     try {
+      const contactStr = customer.contactSource ? `${customer.contactSource}_${customer.ig}` : customer.ig;
       const data = {
         customer_name: customer.name,
-        ig_handle: customer.ig,
+        ig_handle: contactStr,
         email: customer.email,
         phone: customer.phone,
         wedding_date: customer.weddingDate,
@@ -695,6 +699,22 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
           <section>
             <h3 className="text-sm font-bold text-stone-800 mb-4 pb-2 border-b border-stone-100">1. 基本資料</h3>
             <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-stone-500 mb-1">聯絡來源</label>
+                <select
+                  value={customer.contactSource}
+                  onChange={e => setCustomer({...customer, contactSource: e.target.value})}
+                  className="w-full text-sm border border-stone-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-rose-500 outline-none bg-white"
+                >
+                  <option value="">請選擇聯絡來源</option>
+                  <option value="FB">FB</option>
+                  <option value="IG">IG</option>
+                  <option value="Line">Line</option>
+                  <option value="官網">官網</option>
+                  <option value="親友介紹">親友介紹</option>
+                  <option value="其他">其他</option>
+                </select>
+              </div>
               <div>
                 <label className="block text-xs font-medium text-stone-500 mb-1">社群帳號</label>
                 <input
@@ -852,6 +872,9 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
                     </div>
                   </div>
                 )}
+                <div className="text-xs text-stone-500 leading-relaxed bg-white/50 p-2 rounded whitespace-pre-wrap">
+                  {`**豆豆/色塊/蠟筆/線條風格不提供服裝造型姿勢修改，依照片為主繪製\n**豆豆風/蠟筆/戴花似顏繪都是以老師風格為主，偏卡通可愛風格，相似度不高，若對相似度或細節有強迫症或一定要求的新人，請另購我們的韓風寫實插畫唷，謝謝`}
+                </div>
               </div>
 
               {settings.addons.map((addon: any) => {

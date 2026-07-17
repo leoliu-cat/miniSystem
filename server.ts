@@ -3,7 +3,7 @@ import cors from "cors";
 import nodemailer from "nodemailer";
 import { createServer as createViteServer } from "vite";
 import { Pool } from "pg";
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import crypto from "crypto";
 import path from "path";
@@ -333,6 +333,7 @@ async function startServer() {
       order_type TEXT DEFAULT 'invitation',
       unsubscribed INTEGER DEFAULT 0,
       notes TEXT,
+      is_printed INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -343,6 +344,15 @@ async function startServer() {
       filename_back TEXT,
       nas_url TEXT,
       nas_smb TEXT,
+      category TEXT,
+      editable_fields TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -419,6 +429,24 @@ async function startServer() {
   
   try {
     await db.exec(`ALTER TABLE templates ADD COLUMN nas_smb TEXT;`);
+  } catch(e: any) {
+    // Column might already exist
+  }
+
+  try {
+    await db.exec(`ALTER TABLE templates ADD COLUMN category TEXT;`);
+  } catch(e: any) {
+    // Column might already exist
+  }
+
+  try {
+    await db.exec(`ALTER TABLE templates ADD COLUMN editable_fields TEXT;`);
+  } catch(e: any) {
+    // Column might already exist
+  }
+
+  try {
+    await db.exec(`ALTER TABLE weddings ADD COLUMN is_printed INTEGER DEFAULT 0;`);
   } catch(e: any) {
     // Column might already exist
   }
@@ -623,7 +651,41 @@ async function startServer() {
 
   mountWebsiteApi(app, db, authenticateToken);
 
-  // API Routes
+  // User Auth API
+  app.post("/api/user/register", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) return res.status(400).json({ error: "請提供 Email 與密碼" });
+      
+      const existingUser = await db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+      if (existingUser) return res.status(400).json({ error: "此 Email 已被註冊" });
+      
+      const hashedPassword = bcrypt.hashSync(password, 10);
+      await db.prepare("INSERT INTO users (email, password) VALUES (?, ?)").run(email, hashedPassword);
+      
+      res.json({ success: true, message: "註冊成功" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/user/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      const user = await db.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
+      if (!user) return res.status(400).json({ error: "無效的帳號或密碼" });
+      
+      const validPassword = bcrypt.compareSync(password, user.password);
+      if (!validPassword) return res.status(400).json({ error: "無效的帳號或密碼" });
+      
+      const token = jwt.sign({ id: user.id, email: user.email, role: 'user' }, SECRET_KEY, { expiresIn: '24h' });
+      res.json({ token, user: { id: user.id, email: user.email } });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin API Routes
   app.post("/api/login", async (req, res) => {
     try {
       const { username, password } = req.body;
@@ -874,7 +936,7 @@ async function startServer() {
 
   app.post("/api/templates", authenticateToken, upload.single("file"), async (req, res) => {
     try {
-      const { name, nas_url, nas_smb } = req.body;
+      const { name, nas_url, nas_smb, category, editable_fields } = req.body;
       if (!name) {
         return res.status(400).json({ error: "Template name is required" });
       }
@@ -914,10 +976,10 @@ async function startServer() {
         }
       }
 
-      const stmt = db.prepare("INSERT INTO templates (id, name, nas_url, nas_smb, filename) VALUES (?, ?, ?, ?, ?)");
-      await stmt.run(id, name, nas_url || null, nas_smb || null, filename);
+      const stmt = db.prepare("INSERT INTO templates (id, name, nas_url, nas_smb, category, editable_fields, filename) VALUES (?, ?, ?, ?, ?, ?, ?)");
+      await stmt.run(id, name, nas_url || null, nas_smb || null, category || null, editable_fields || null, filename);
 
-      res.json({ success: true, id, name, nas_url, nas_smb, filename });
+      res.json({ success: true, id, name, nas_url, nas_smb, category, editable_fields, filename });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -926,7 +988,7 @@ async function startServer() {
   app.put("/api/templates/:id", authenticateToken, upload.single("file"), async (req, res) => {
     try {
       const { id } = req.params;
-      const { name, nas_url, nas_smb } = req.body;
+      const { name, nas_url, nas_smb, category, editable_fields } = req.body;
       if (!name) return res.status(400).json({ error: "Template name is required" });
 
       const currentTemplate = await db.prepare("SELECT * FROM templates WHERE id = ?").get(id) as any;
@@ -965,9 +1027,9 @@ async function startServer() {
         }
       }
 
-      const stmt = db.prepare("UPDATE templates SET name = ?, nas_url = ?, nas_smb = ?, filename = ? WHERE id = ?");
-      await stmt.run(name, nas_url || null, nas_smb || null, newFilename, id);
-      res.json({ success: true, id, name, nas_url, nas_smb, filename: newFilename });
+      const stmt = db.prepare("UPDATE templates SET name = ?, nas_url = ?, nas_smb = ?, category = ?, editable_fields = ?, filename = ? WHERE id = ?");
+      await stmt.run(name, nas_url || null, nas_smb || null, category || null, editable_fields || null, newFilename, id);
+      res.json({ success: true, id, name, nas_url, nas_smb, category, editable_fields, filename: newFilename });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1947,10 +2009,11 @@ async function startServer() {
           w.id, w.order_code, w.status, w.contact_source, w.social_id,
           w.groom_name_zh, w.bride_name_zh, w.groom_name_en, w.bride_name_en,
           w.wedding_date, w.payment_date, w.amount, w.design_deadline,
-          w.delivery_date, w.tracking_number, w.created_at,
+          w.delivery_date, w.shipped_date, w.email, w.tracking_number, w.created_at,
           w.receiver_name, w.receiver_phone, w.receiver_address,
           w.designer_id, w.unsubscribed as marketing_email_optout, w.template_id,
-          w.bank_last_5, w.tax, w.invoice_number, w.order_type, w.notes,
+          w.bank_last_5, w.tax, w.invoice_number, w.order_type, w.notes, w.invitation_quantity,
+          w.is_printed,
           t.name as template_name,
           t.nas_url as template_nas_url,
           t.nas_smb as template_nas_smb,
@@ -2028,6 +2091,18 @@ async function startServer() {
         await db.prepare("UPDATE weddings SET status = ? WHERE id = ?").run(status, id);
       }
       res.json({ success: true, shipped_date: status === '已出貨' ? new Date().toISOString().split('T')[0] : null });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/weddings/:id/is-printed", authenticateToken, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { is_printed } = req.body;
+      await db.prepare("UPDATE weddings SET is_printed = ? WHERE id = ?").run(is_printed ? 1 : 0, id);
+      invalidateCache('weddings_');
+      res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -2191,15 +2266,31 @@ async function startServer() {
       }
 
       const file = req.file;
-      const ext = path.extname(file.originalname).toLowerCase() || '.png';
-      const filename = `website-${Date.now()}${ext}`;
+      const parsedPath = path.parse(file.originalname);
+      let targetFilename = file.originalname;
+      const autoRename = req.query.autoRename === 'true';
       
       if (isS3) {
         try {
           const bucketName = process.env.R2_BUCKET!;
+
+          try {
+            await s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: targetFilename }));
+            // If it exists
+            if (autoRename) {
+              targetFilename = `${parsedPath.name}-${Date.now().toString().slice(-6)}${parsedPath.ext}`;
+            } else {
+              return res.status(409).json({ error: "檔案名稱重複" });
+            }
+          } catch (headErr: any) {
+            if (headErr.name !== "NotFound" && headErr.$metadata?.httpStatusCode !== 404) {
+              throw headErr;
+            }
+          }
+
           await s3.send(new PutObjectCommand({
             Bucket: bucketName,
-            Key: filename,
+            Key: targetFilename,
             Body: file.buffer,
             ContentType: file.mimetype,
           }));
@@ -2213,15 +2304,65 @@ async function startServer() {
           if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
           }
-          fs.writeFileSync(path.join(uploadDir, filename), file.buffer);
+          if (fs.existsSync(path.join(uploadDir, targetFilename))) {
+            if (autoRename) {
+              targetFilename = `${parsedPath.name}-${Date.now().toString().slice(-6)}${parsedPath.ext}`;
+            } else {
+              return res.status(409).json({ error: "檔案名稱重複" });
+            }
+          }
+          fs.writeFileSync(path.join(uploadDir, targetFilename), file.buffer);
         } catch (localError: any) {
           console.error("Local Upload Error:", localError);
           return res.status(500).json({ error: "Local file save failed" });
         }
       }
       
-      res.json({ url: `/uploads/${filename}` });
+      res.json({ url: `/uploads/${encodeURIComponent(targetFilename)}` });
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/admin/upload", authenticateToken, async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: "No URL provided" });
+      
+      console.log("Attempting to delete image URL:", url);
+      
+      // Extract filename from URL (e.g. /uploads/filename.ext)
+      const parts = url.split("/uploads/");
+      if (parts.length < 2) return res.status(400).json({ error: "Invalid URL format" });
+      
+      // Handle the fact that parts might contain query strings like ?v=123
+      const filenameMatch = decodeURIComponent(parts[1]).split("?")[0];
+      const filename = filenameMatch.replace(/^\/+/, ""); // strip leading slash if any
+      
+      console.log("Parsed filename to delete:", filename);
+      
+      if (isS3) {
+        const bucketName = process.env.R2_BUCKET!;
+        console.log("Deleting from S3 bucket:", bucketName, "Key:", filename);
+        await s3.send(new DeleteObjectCommand({
+          Bucket: bucketName,
+          Key: filename,
+        }));
+        console.log("S3 delete command sent successfully.");
+      } else {
+        const uploadDir = path.join(DATA_DIR, "uploads");
+        const filePath = path.join(uploadDir, filename);
+        console.log("Deleting local file:", filePath);
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          console.log("Local file deleted successfully.");
+        } else {
+          console.log("Local file does not exist:", filePath);
+        }
+      }
+      res.json({ success: true, deleted: filename });
+    } catch (error: any) {
+      console.error("Delete image error:", error);
       res.status(500).json({ error: error.message });
     }
   });
