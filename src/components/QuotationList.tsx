@@ -342,11 +342,16 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
       const lowerQuery = searchQuery.toLowerCase();
       filtered = filtered.filter(q => {
         const nameMatch = (q.customer_name || '').toLowerCase().includes(lowerQuery);
+        const igMatch = (q.ig_handle || '').toLowerCase().includes(lowerQuery);
         const amountMatch = String(q.total_amount || '').includes(lowerQuery);
-        const statusStr = q.status === 'ordered' ? '已轉單' : '報價中';
+        
+        let statusStr = '追蹤中';
+        if (q.status === 'ordered') statusStr = '已轉單';
+        if (q.status === 'cancelled') statusStr = '已取消';
+        
         const statusMatch = statusStr.includes(lowerQuery);
         
-        return nameMatch || amountMatch || statusMatch;
+        return nameMatch || igMatch || amountMatch || statusMatch;
       });
     }
     
