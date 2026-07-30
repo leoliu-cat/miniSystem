@@ -259,6 +259,13 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
       }
     }
     
+    const getPrice = (customPrices: Record<string, string | number>, id: string, defaultPrice: number) => {
+      const val = customPrices[id];
+      if (val === undefined || val === '') return defaultPrice;
+      const num = Number(val);
+      return isNaN(num) ? 0 : num;
+    };
+
     // 處理最低起訂量
     let calcQty = customer.quantity || 0;
     let qtyWarning = '';
@@ -274,7 +281,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
     }
 
     // 主方案計算
-    const pkgPrice = packageCustomPrices[pkg.id] !== undefined ? Number(packageCustomPrices[pkg.id]) || 0 : pkg.price;
+    const pkgPrice = getPrice(packageCustomPrices, pkg.id, pkg.price);
     const baseTotal = calcQty * pkgPrice;
 
     // 加購項目計算
@@ -308,7 +315,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
         let calcStr = '';
         let suffix = '';
         const qty = addonQuantities[addon.id] !== undefined ? addonQuantities[addon.id] : calcQty;
-        const price = Number(addonCustomPrices[addon.id] !== undefined ? addonCustomPrices[addon.id] : addon.price) || 0;
+        const price = getPrice(addonCustomPrices, addon.id, addon.price);
         
         if (addon.type === 'per_item_min_100') {
           const foilQty = Math.max(100, qty);
@@ -341,7 +348,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
     settings.independentAddons.forEach((addon: any) => {
       if (selectedAddons[addon.id]) {
         const qty = addonQuantities[addon.id] !== undefined ? addonQuantities[addon.id] : calcQty;
-        const price = Number(addonCustomPrices[addon.id] !== undefined ? addonCustomPrices[addon.id] : addon.price) || 0;
+        const price = getPrice(addonCustomPrices, addon.id, addon.price);
         let finalQty = qty;
         let suffixText = '';
         if (addon.id === 'env_foil' && qty < 100) {
@@ -440,6 +447,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
 
     return {
       pkg,
+      pkgPrice,
       calcQty,
       qtyWarning,
       baseTotal,
@@ -454,7 +462,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
   }, [settings, customer, selectedPackageId, selectedAddons, addonQuantities, addonCustomPrices, packageCustomPrices, selectedIllustratorId, petCount, certificateId, coasterQty]);
 
   const generateOrderText = () => {
-    const { pkg, calcQty, baseTotal, addonDetails, setupFee, discountName, discountAmount, subtotalValue, shippingFee, finalTotal } = quotationData;
+    const { pkg, pkgPrice, calcQty, baseTotal, addonDetails, setupFee, discountName, discountAmount, subtotalValue, shippingFee, finalTotal } = quotationData;
     
     let text = `您好，您的訂購資訊與報價如下：\n\n`;
     const contactStr = customer.contactSource ? `${customer.contactSource}_${customer.ig}` : customer.ig;
@@ -469,7 +477,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
     if (pkg.id !== 'none') {
       text += `🏷️ 【主方案】${pkg.name}\n`;
       text += `包含：12x18cm 卡片、彩色信封、信封單面燙金、金屬燙金貼紙、電子喜帖(JPEG格式)\n`;
-      text += `單價：${pkg.price} 元/份\n`;
+      text += `單價：${pkgPrice} 元/份\n`;
       text += `數量：${calcQty} 份\n`;
       text += ` 小計：NT$ ${baseTotal.toLocaleString()}\n\n`;
     }
