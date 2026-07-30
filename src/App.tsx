@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Download, CheckCircle, FileText, LayoutTemplate, Send, Users, Upload, Plus, Trash2, Edit2, AlertCircle, X, LogOut, Search, Settings, Copy, Printer, ChevronDown, ChevronUp, Tag, ExternalLink } from "lucide-react";
 import { PrintWorkOrderModal } from './components/PrintWorkOrderModal';
 import { EditOrderModal } from './components/EditOrderModal';
