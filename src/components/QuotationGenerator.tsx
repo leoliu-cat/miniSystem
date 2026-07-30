@@ -149,7 +149,8 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
   const [selectedPackageId, setSelectedPackageId] = useState<string>('single_65');
   const [selectedAddons, setSelectedAddons] = useState<Record<string, boolean>>({});
   const [addonQuantities, setAddonQuantities] = useState<Record<string, number>>({});
-  const [addonCustomPrices, setAddonCustomPrices] = useState<Record<string, number>>({});
+  const [packageCustomPrices, setPackageCustomPrices] = useState<Record<string, number | string>>({});
+  const [addonCustomPrices, setAddonCustomPrices] = useState<Record<string, number | string>>({});
   const [selectedIllustratorId, setSelectedIllustratorId] = useState<string>('none');
   const [petCount, setPetCount] = useState<number>(0);
   const [certificateId, setCertificateId] = useState<string>('none');
@@ -185,6 +186,9 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
           setSelectedAddons(newSelected);
         }
 
+        if (data.packageCustomPrices) {
+          setPackageCustomPrices(data.packageCustomPrices);
+        }
         if (data.addonCustomPrices) {
           setAddonCustomPrices(data.addonCustomPrices);
         }
@@ -270,7 +274,8 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
     }
 
     // 主方案計算
-    const baseTotal = calcQty * pkg.price;
+    const pkgPrice = packageCustomPrices[pkg.id] !== undefined ? Number(packageCustomPrices[pkg.id]) || 0 : pkg.price;
+    const baseTotal = calcQty * pkgPrice;
 
     // 加購項目計算
     const addonDetails: { name: string, calcStr: string, total: number, suffix: string, customText?: string }[] = [];
@@ -303,7 +308,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
         let calcStr = '';
         let suffix = '';
         const qty = addonQuantities[addon.id] !== undefined ? addonQuantities[addon.id] : calcQty;
-        const price = addonCustomPrices[addon.id] !== undefined ? addonCustomPrices[addon.id] : addon.price;
+        const price = Number(addonCustomPrices[addon.id] !== undefined ? addonCustomPrices[addon.id] : addon.price) || 0;
         
         if (addon.type === 'per_item_min_100') {
           const foilQty = Math.max(100, qty);
@@ -336,7 +341,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
     settings.independentAddons.forEach((addon: any) => {
       if (selectedAddons[addon.id]) {
         const qty = addonQuantities[addon.id] !== undefined ? addonQuantities[addon.id] : calcQty;
-        const price = addonCustomPrices[addon.id] !== undefined ? addonCustomPrices[addon.id] : addon.price;
+        const price = Number(addonCustomPrices[addon.id] !== undefined ? addonCustomPrices[addon.id] : addon.price) || 0;
         let finalQty = qty;
         let suffixText = '';
         if (addon.id === 'env_foil' && qty < 100) {
@@ -446,7 +451,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
       shippingFee,
       finalTotal
     };
-  }, [settings, customer, selectedPackageId, selectedAddons, addonQuantities, addonCustomPrices, selectedIllustratorId, petCount, certificateId, coasterQty]);
+  }, [settings, customer, selectedPackageId, selectedAddons, addonQuantities, addonCustomPrices, packageCustomPrices, selectedIllustratorId, petCount, certificateId, coasterQty]);
 
   const generateOrderText = () => {
     const { pkg, calcQty, baseTotal, addonDetails, setupFee, discountName, discountAmount, subtotalValue, shippingFee, finalTotal } = quotationData;
@@ -595,6 +600,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
           selectedAddons,
           addonQuantities,
           addonCustomPrices,
+          packageCustomPrices,
           selectedIllustratorId,
           petCount,
           certificateId,
@@ -819,7 +825,9 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
                   <span className="text-sm font-medium text-stone-700">不需要喜帖套餐</span>
                 </div>
               </label>
-              {settings.packages.filter((pkg: any) => pkg.id !== 'none').map((pkg: any) => (
+              {settings.packages.filter((pkg: any) => pkg.id !== 'none').map((pkg: any) => {
+                const price = packageCustomPrices[pkg.id] !== undefined ? packageCustomPrices[pkg.id] : pkg.price;
+                return (
                 <label key={pkg.id} className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${selectedPackageId === pkg.id ? 'border-rose-500 bg-rose-50' : 'border-stone-200 hover:bg-stone-50'}`}>
                   <div className="flex items-center gap-3">
                     <input
@@ -832,9 +840,20 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
                     />
                     <span className="text-sm font-medium text-stone-700">{pkg.name}</span>
                   </div>
-                  {pkg.id !== 'none' && <span className="text-sm text-stone-500">{pkg.price} 元/份</span>}
+                  {pkg.id !== 'none' && (
+                    <div className="flex items-center gap-1 text-sm text-stone-500">
+                      <input 
+                        type="number"
+                        value={price}
+                        onChange={e => setPackageCustomPrices(prev => ({ ...prev, [pkg.id]: e.target.value }))}
+                        onClick={e => e.stopPropagation()}
+                        className="w-16 border border-transparent hover:border-stone-300 focus:border-rose-500 rounded px-1 py-0.5 text-right outline-none bg-transparent transition-colors"
+                      />
+                      <span>元/份</span>
+                    </div>
+                  )}
                 </label>
-              ))}
+              )})}
             </div>
           </section>
 
@@ -895,7 +914,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
                       <input 
                         type="number"
                         value={price}
-                        onChange={e => setAddonCustomPrices(prev => ({ ...prev, [addon.id]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                        onChange={e => setAddonCustomPrices(prev => ({ ...prev, [addon.id]: e.target.value }))}
                         onClick={e => e.stopPropagation()}
                         className="w-16 border border-transparent hover:border-stone-300 focus:border-rose-500 rounded px-1 py-0.5 text-right outline-none bg-transparent transition-colors"
                       />
@@ -934,7 +953,7 @@ export default function QuotationGenerator({ editQuoteData, onClearEdit }: Quota
                       <input 
                         type="number"
                         value={price}
-                        onChange={e => setAddonCustomPrices(prev => ({ ...prev, [addon.id]: Math.max(0, parseInt(e.target.value) || 0) }))}
+                        onChange={e => setAddonCustomPrices(prev => ({ ...prev, [addon.id]: e.target.value }))}
                         onClick={e => e.stopPropagation()}
                         className="w-16 border border-transparent hover:border-stone-300 focus:border-rose-500 rounded px-1 py-0.5 text-right outline-none bg-transparent transition-colors"
                       />
