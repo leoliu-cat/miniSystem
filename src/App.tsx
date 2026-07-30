@@ -751,6 +751,13 @@ export default function App() {
   const [filterStatus, setFilterStatus] = useState<string>("新進訂單");
   const [dashboardMonth, setDashboardMonth] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterDesignerId, filterStatus, searchQuery, dashboardMonth]);
+
   const [showAddDesigner, setShowAddDesigner] = useState(false);
   const [newDesigner, setNewDesigner] = useState({ name: "", username: "", password: "" });
   const [editingDesignerId, setEditingDesignerId] = useState<number | null>(null);
@@ -1055,6 +1062,42 @@ export default function App() {
       showAlert("登入失敗", "發生錯誤，請稍後再試");
     }
   };
+
+  const filteredSubmissions = useMemo(() => {
+    return submissions
+      .filter(sub => filterDesignerId === "all" || sub.designer_id === filterDesignerId)
+      .filter(sub => {
+        if (filterStatus === "all") {
+          if (searchQuery) return true;
+          return sub.status !== "已出貨" && sub.status !== "已結案";
+        }
+        if (filterStatus === "等待填寫資料") return !sub.status || sub.status === "等待填寫資料";
+        return sub.status === filterStatus;
+      })
+      .filter(sub => {
+        if (!searchQuery) return true;
+        const q = searchQuery.toLowerCase();
+        return (
+          sub.id?.toString().includes(q) ||
+          sub.groom_name_zh?.toLowerCase().includes(q) ||
+          sub.bride_name_zh?.toLowerCase().includes(q) ||
+          sub.groom_name_en?.toLowerCase().includes(q) ||
+          sub.bride_name_en?.toLowerCase().includes(q) ||
+          sub.receiver_name?.toLowerCase().includes(q) ||
+          sub.receiver_phone?.includes(q) ||
+          sub.social_id?.toLowerCase().includes(q) ||
+          sub.wedding_date?.includes(q) ||
+          sub.status?.toLowerCase().includes(q) ||
+          sub.order_code?.toLowerCase().includes(q)
+        );
+      });
+  }, [submissions, filterDesignerId, filterStatus, searchQuery]);
+
+  const totalPages = Math.ceil(filteredSubmissions.length / itemsPerPage);
+  const paginatedSubmissions = filteredSubmissions.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
   const handleLogout = () => {
     setToken(null);
@@ -2370,60 +2413,12 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-stone-100">
-                        {submissions
-                          .filter(sub => filterDesignerId === "all" || sub.designer_id === filterDesignerId)
-                          .filter(sub => {
-                            if (filterStatus === "all") return sub.status !== "已出貨" && sub.status !== "已結案";
-                            if (filterStatus === "等待填寫資料") return !sub.status || sub.status === "等待填寫資料";
-                            return sub.status === filterStatus;
-                          })
-                          .filter(sub => {
-                            if (!searchQuery) return true;
-                            const q = searchQuery.toLowerCase();
-                            return (
-                              sub.id?.toString().includes(q) ||
-                              sub.groom_name_zh?.toLowerCase().includes(q) ||
-                              sub.bride_name_zh?.toLowerCase().includes(q) ||
-                              sub.groom_name_en?.toLowerCase().includes(q) ||
-                              sub.bride_name_en?.toLowerCase().includes(q) ||
-                              sub.receiver_name?.toLowerCase().includes(q) ||
-                              sub.receiver_phone?.includes(q) ||
-                              sub.social_id?.toLowerCase().includes(q) ||
-                              sub.wedding_date?.includes(q) ||
-                              sub.status?.toLowerCase().includes(q) ||
-                              sub.order_code?.toLowerCase().includes(q)
-                            );
-                          })
-                          .length === 0 ? (
+                        {filteredSubmissions.length === 0 ? (
                           <tr>
                             <td colSpan={7} className="py-8 text-center text-stone-500">目前尚無訂單</td>
                           </tr>
                         ) : (
-                          submissions
-                            .filter(sub => filterDesignerId === "all" || sub.designer_id === filterDesignerId)
-                            .filter(sub => {
-                              if (filterStatus === "all") return sub.status !== "已出貨" && sub.status !== "已結案";
-                              if (filterStatus === "等待填寫資料") return !sub.status || sub.status === "等待填寫資料";
-                              return sub.status === filterStatus;
-                            })
-                            .filter(sub => {
-                              if (!searchQuery) return true;
-                              const q = searchQuery.toLowerCase();
-                              return (
-                                sub.id?.toString().includes(q) ||
-                                sub.groom_name_zh?.toLowerCase().includes(q) ||
-                                sub.bride_name_zh?.toLowerCase().includes(q) ||
-                                sub.groom_name_en?.toLowerCase().includes(q) ||
-                                sub.bride_name_en?.toLowerCase().includes(q) ||
-                                sub.receiver_name?.toLowerCase().includes(q) ||
-                                sub.receiver_phone?.includes(q) ||
-                                sub.social_id?.toLowerCase().includes(q) ||
-                                sub.wedding_date?.includes(q) ||
-                                sub.status?.toLowerCase().includes(q) ||
-                                sub.order_code?.toLowerCase().includes(q)
-                              );
-                            })
-                            .map((sub) => {
+                          paginatedSubmissions.map((sub) => {
                             const templateName = templates.find(t => t.id === sub.template_id)?.name || sub.template_id;
                             const isExpanded = expandedOrderId === sub.id;
                             return (
@@ -2843,6 +2838,34 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
+                  
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                    <div className="px-6 py-4 border-t border-stone-200 flex items-center justify-between bg-stone-50">
+                      <p className="text-sm text-stone-500">
+                        共 {filteredSubmissions.length} 筆資料，顯示第 {(currentPage - 1) * itemsPerPage + 1} 到 {Math.min(currentPage * itemsPerPage, filteredSubmissions.length)} 筆
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                          className="px-3 py-1 text-sm border border-stone-200 rounded-lg bg-white disabled:opacity-50 hover:bg-stone-50 transition-colors"
+                        >
+                          上一頁
+                        </button>
+                        <span className="px-3 py-1 text-sm text-stone-600 flex items-center">
+                          {currentPage} / {totalPages}
+                        </span>
+                        <button
+                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages}
+                          className="px-3 py-1 text-sm border border-stone-200 rounded-lg bg-white disabled:opacity-50 hover:bg-stone-50 transition-colors"
+                        >
+                          下一頁
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 
                 <div className="mt-8 bg-blue-50 border border-blue-100 rounded-xl p-6 text-blue-800">

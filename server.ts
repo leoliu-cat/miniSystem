@@ -1531,7 +1531,7 @@ async function startServer() {
       const cached = getCache(cacheKey);
       if (cached) return res.json(cached);
 
-      const stmt = db.prepare("SELECT * FROM expenses ORDER BY expense_date DESC LIMIT 100");
+      const stmt = db.prepare("SELECT * FROM expenses ORDER BY expense_date DESC");
       const expenses = await stmt.all();
       setCache(cacheKey, expenses);
       res.json(expenses);
@@ -1588,7 +1588,7 @@ async function startServer() {
       const cached = getCache(cacheKey);
       if (cached) return res.json(cached);
 
-      const stmt = db.prepare("SELECT * FROM incomes ORDER BY income_date DESC LIMIT 100");
+      const stmt = db.prepare("SELECT * FROM incomes ORDER BY income_date DESC");
       const incomes = await stmt.all();
       setCache(cacheKey, incomes);
       res.json(incomes);
@@ -1645,7 +1645,7 @@ async function startServer() {
       const cached = getCache(cacheKey);
       if (cached) return res.json(cached);
 
-      const stmt = db.prepare("SELECT * FROM quotations ORDER BY created_at DESC LIMIT 100");
+      const stmt = db.prepare("SELECT * FROM quotations ORDER BY created_at DESC");
       const quotations = await stmt.all();
       setCache(cacheKey, quotations);
       res.json(quotations);
@@ -2031,7 +2031,6 @@ async function startServer() {
           GROUP BY wedding_id
         ) ml ON w.id = ml.wedding_id
         ORDER BY w.created_at DESC
-        LIMIT 100
       `);
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
       const weddings = await stmt.all(thirtyDaysAgo);

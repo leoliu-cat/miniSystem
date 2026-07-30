@@ -16,6 +16,12 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedMonth, searchQuery]);
 
   const fetchData = async () => {
     try {
@@ -358,6 +364,12 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
     return filtered;
   }, [quotations, selectedMonth, searchQuery]);
 
+  const totalPages = Math.ceil(filteredQuotations.length / itemsPerPage);
+  const paginatedQuotations = filteredQuotations.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
   const stats = useMemo(() => {
     const total = filteredQuotations.length;
     const convertedOrders = filteredQuotations.filter(q => q.status === 'ordered');
@@ -474,7 +486,7 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
               </tr>
             </thead>
             <tbody className="text-sm">
-              {filteredQuotations.map(quote => {
+              {paginatedQuotations.map(quote => {
                 const daysSince = differenceInDays(new Date(), new Date(quote.created_at));
                 const isWarning = quote.status === 'pending' && daysSince >= 7;
 
@@ -574,6 +586,34 @@ export default function QuotationList({ onConvertToOrder, onEditQuote }: Quotati
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="px-6 py-4 border-t border-stone-200 flex items-center justify-between bg-stone-50">
+            <p className="text-sm text-stone-500">
+              共 {filteredQuotations.length} 筆資料，顯示第 {(currentPage - 1) * itemsPerPage + 1} 到 {Math.min(currentPage * itemsPerPage, filteredQuotations.length)} 筆
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 text-sm border border-stone-200 rounded-lg bg-white disabled:opacity-50 hover:bg-stone-50 transition-colors"
+              >
+                上一頁
+              </button>
+              <span className="px-3 py-1 text-sm text-stone-600 flex items-center">
+                {currentPage} / {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1 text-sm border border-stone-200 rounded-lg bg-white disabled:opacity-50 hover:bg-stone-50 transition-colors"
+              >
+                下一頁
+              </button>
+            </div>
+          </div>
+        )}
 
         {deleteConfirmId && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
